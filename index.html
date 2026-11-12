@@ -5,20 +5,22 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>스노우 엔젤</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #b9c9e0; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #e6edf7; }
   body { cursor: none; }
   #c { display: block; width: 100vw; height: 100vh; }
   video { display: none; }
   #people-ui { position: fixed; inset: auto clamp(16px, 3vw, 52px) clamp(16px, 3vh, 40px); display: flex; justify-content: space-between; pointer-events: none; }
-  .person-card { width: clamp(150px, 15vw, 240px); padding: 10px; color: #f5faff; background: rgba(24, 48, 77, 0.74); border: 1px solid rgba(235, 246, 255, 0.25); border-radius: 16px; box-shadow: 0 14px 40px rgba(42, 65, 105, 0.22); font: 500 clamp(12px, 1vw, 16px) / 1.4 "Pretendard", "Malgun Gothic", sans-serif; opacity: 0.62; transition: opacity 0.25s, border-color 0.25s; }
-  .person-card[data-active="true"] { opacity: 1; border-color: rgba(255, 250, 220, 0.8); }
+  /* 서리 낀 유리 카드 */
+  .person-card { width: clamp(150px, 15vw, 240px); padding: 10px; color: #1c3054; background: rgba(255, 255, 255, 0.42); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); border: 1px solid rgba(255, 255, 255, 0.75); border-radius: 18px; box-shadow: 0 18px 40px rgba(60, 86, 135, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.9); font: 500 clamp(12px, 1vw, 16px) / 1.4 "Pretendard", "Malgun Gothic", sans-serif; opacity: 0.7; transition: opacity 0.25s, border-color 0.25s, box-shadow 0.25s; }
+  .person-card[data-active="true"] { opacity: 1; border-color: rgba(240, 196, 112, 0.95); box-shadow: 0 18px 44px rgba(60, 86, 135, 0.22), 0 0 0 3px rgba(240, 196, 112, 0.28); }
   .person-head, .person-meta { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
   .person-head { margin: 2px 3px 8px; font-weight: 700; }
-  .person-head span:last-child { color: #c9ddf5; font-size: 0.78em; font-weight: 500; }
-  .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 9px; background: linear-gradient(#8fa9ca, #d7e4f3); }
-  .person-meta { margin: 9px 3px 7px; font-size: 0.82em; }
-  .person-progress { height: 4px; overflow: hidden; border-radius: 4px; background: rgba(255, 255, 255, 0.23); }
-  .person-progress span { display: block; height: 100%; width: 0; background: #fff1c6; transition: width 0.2s; }
+  .person-head span:last-child { color: #6d82a8; font-size: 0.78em; font-weight: 600; letter-spacing: 0.08em; }
+  .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 11px; background: url('./assets/snow-angel-mark.png') center / 76px auto no-repeat, radial-gradient(120% 80% at 50% 100%, #ffffff, #dfe8f4 60%, #c8d6ea); box-shadow: inset 0 2px 8px rgba(70, 95, 140, 0.18); }
+  .person-card[data-active="true"] .person-preview { background: #dfe8f4; }
+  .person-meta { margin: 9px 3px 7px; font-size: 0.82em; color: #3a5079; }
+  .person-progress { height: 5px; overflow: hidden; border-radius: 5px; background: rgba(40, 64, 110, 0.12); }
+  .person-progress span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #f3cf86, #e2a548); transition: width 0.2s; }
   @media (max-width: 800px) { .person-card { width: clamp(120px, 22vw, 170px); padding: 7px; } }
 </style>
 </head>
@@ -66,35 +68,95 @@ const personCards = ['person-left', 'person-right'].map(id => {
   return { el, canvas, ctx: canvas.getContext('2d'), status: el.querySelector('.person-status'), percent: el.querySelector('.person-percent'), bar: el.querySelector('.person-progress span') };
 });
 const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
-const dent = mk(1, 1), shade = mk(1, 1); // 눌린 눈(밝은 면) / 안쪽 그림자
+const dent = mk(1, 1), shade = mk(1, 1), tmpA = mk(1, 1); // 눌린 모양 마스크 / 합성된 자국 / 작업용
 let W = 0, H = 0, DPR = 1, bg = null, glints = [], flakes = [];
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 1.5);
   W = cv.width = Math.round(innerWidth * DPR);
   H = cv.height = Math.round(innerHeight * DPR);
-  for (const c of [dent, shade]) { c.width = Math.round(W * IMP); c.height = Math.round(H * IMP); }
+  for (const c of [dent, shade, tmpA]) { c.width = Math.round(W * IMP); c.height = Math.round(H * IMP); }
   buildBackground();
   buildSnow();
 }
 addEventListener('resize', resize);
 
+// 값 노이즈(fBm): 바람에 쓸린 눈더미 결을 만든다
+function makeNoise(seed) {
+  const N = 256, perm = new Uint8Array(N * 2), val = new Float32Array(N);
+  let s = seed >>> 0 || 1;
+  const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < N; i++) { perm[i] = i; val[i] = rnd(); }
+  for (let i = N - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; [perm[i], perm[j]] = [perm[j], perm[i]]; }
+  for (let i = 0; i < N; i++) perm[N + i] = perm[i];
+  const at = (x, y) => val[perm[(perm[x & 255] + y) & 255]];
+  const sm = t => t * t * (3 - 2 * t);
+  const n2 = (x, y) => {
+    const xi = Math.floor(x), yi = Math.floor(y), u = sm(x - xi), v = sm(y - yi);
+    const a = at(xi, yi), b = at(xi + 1, yi), c = at(xi, yi + 1), d = at(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  };
+  return (x, y, oct = 5) => { let sum = 0, amp = 0.5, f = 1, norm = 0; for (let o = 0; o < oct; o++) { sum += n2(x * f, y * f) * amp; norm += amp; amp *= 0.5; f *= 2.03; } return sum / norm; };
+}
+
 function buildBackground() {
   bg = mk(W, H);
   const g = bg.getContext('2d');
-  const rg = g.createRadialGradient(W / 2, H * 0.55, H * 0.1, W / 2, H * 0.55, Math.hypot(W, H) * 0.62);
-  rg.addColorStop(0, '#e6eef8');
-  rg.addColorStop(0.55, '#c8d6ea');
-  rg.addColorStop(1, '#8ea4c6');
-  g.fillStyle = rg; g.fillRect(0, 0, W, H);
-  // 눈 결: 아주 옅은 얼룩
-  for (let i = 0; i < 900; i++) {
-    const x = Math.random() * W, y = Math.random() * H, r = (Math.random() * 30 + 6) * DPR;
-    g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(120,145,185,0.035)';
-    g.beginPath(); g.ellipse(x, y, r * 1.6, r, 0, 0, Math.PI * 2); g.fill();
+  // 1) 바탕: 위(먼 곳)는 푸른 그늘, 아래(가까운 곳)는 밝은 흰 눈 — 바닥처럼 보이게
+  const lg = g.createLinearGradient(0, 0, 0, H);
+  lg.addColorStop(0, '#d3deee'); lg.addColorStop(0.35, '#e9f0f9'); lg.addColorStop(1, '#f7fafe');
+  g.fillStyle = lg; g.fillRect(0, 0, W, H);
+
+  // 2) 눈더미 결: 높이장 → 왼쪽 위 빛으로 음영 (가로로 길게 늘여 바람결 느낌)
+  const fbm = makeNoise(7), sw = Math.ceil(W / 6), sh = Math.ceil(H / 6);
+  const hgt = new Float32Array(sw * sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    const nx = x / sw * 4.2, ny = y / sh * 7.5;
+    const warp = fbm(nx * 0.6 + 11, ny * 0.6, 3) * 2.2; // 결을 살짝 휘게
+    hgt[y * sw + x] = fbm(nx + warp, ny * 1.0 + warp * 0.4);
   }
-  glints = Array.from({ length: 140 }, () => ({
-    x: Math.random() * W, y: Math.random() * H, ph: Math.random() * 6.28, sp: 0.6 + Math.random() * 1.6,
+  const drift = mk(sw, sh), dg = drift.getContext('2d'), img = dg.createImageData(sw, sh), d = img.data;
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    const i = y * sw + x;
+    const hx = hgt[y * sw + Math.min(sw - 1, x + 1)] - hgt[y * sw + Math.max(0, x - 1)];
+    const hy = hgt[Math.min(sh - 1, y + 1) * sw + x] - hgt[Math.max(0, y - 1) * sw + x];
+    const light = clamp(-(hx * 0.55 + hy * 0.85) * 9, -1, 1); // 빛: 왼쪽 위
+    const o = i * 4;
+    if (light > 0) { d[o] = 255; d[o + 1] = 255; d[o + 2] = 255; d[o + 3] = light * 150; }
+    else { d[o] = 112; d[o + 1] = 140; d[o + 2] = 188; d[o + 3] = -light * 95; }
+  }
+  dg.putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.drawImage(drift, 0, 0, W, H);
+
+  // 3) 큰 그늘 덩어리(부드러운 굴곡)
+  const big = mk(48, 27), bgc = big.getContext('2d'), bimg = bgc.createImageData(48, 27);
+  for (let y = 0; y < 27; y++) for (let x = 0; x < 48; x++) {
+    const v = fbm(x / 48 * 2.5 + 40, y / 27 * 1.6 + 9, 3), o = (y * 48 + x) * 4;
+    bimg.data[o] = 120; bimg.data[o + 1] = 150; bimg.data[o + 2] = 200; bimg.data[o + 3] = clamp((v - 0.5) * 2.4, 0, 1) * 55;
+  }
+  bgc.putImageData(bimg, 0, 0);
+  g.drawImage(big, 0, 0, W, H);
+
+  // 4) 가장자리 비네팅: 중앙 무대에 시선이 모이게
+  const vg = g.createRadialGradient(W / 2, H * 0.55, Math.min(W, H) * 0.35, W / 2, H * 0.55, Math.hypot(W, H) * 0.62);
+  vg.addColorStop(0, 'rgba(110,135,180,0)'); vg.addColorStop(1, 'rgba(96,122,170,0.32)');
+  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+
+  // 5) 고운 입자(눈 알갱이)
+  const tile = mk(192, 192), tg = tile.getContext('2d'), timg = tg.createImageData(192, 192);
+  for (let i = 0; i < timg.data.length; i += 4) {
+    const r = Math.random();
+    if (r < 0.5) { timg.data[i] = timg.data[i + 1] = timg.data[i + 2] = 255; timg.data[i + 3] = r * 70; }
+    else { timg.data[i] = 120; timg.data[i + 1] = 145; timg.data[i + 2] = 190; timg.data[i + 3] = (r - 0.5) * 40; }
+  }
+  tg.putImageData(timg, 0, 0);
+  g.fillStyle = g.createPattern(tile, 'repeat'); g.fillRect(0, 0, W, H);
+
+  // 반짝이: 아래(가까운 곳)일수록 많게
+  glints = Array.from({ length: 260 }, () => ({
+    x: Math.random() * W, y: Math.pow(Math.random(), 0.7) * H, ph: Math.random() * 6.28, sp: 0.5 + Math.random() * 1.8,
+    big: Math.random() < 0.12, warm: Math.random() < 0.3,
   }));
 }
 
@@ -214,8 +276,29 @@ async function keepAwake() {
 }
 document.addEventListener('visibilitychange', keepAwake);
 
+// ?demo: 카메라 없이 가상의 두 사람이 팔다리를 젓는 화면으로 연출 확인
+const DEMO = new URLSearchParams(location.search).has('demo');
+function demoPose(t, cx) {
+  const lm = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0 }));
+  const set = (i, x, y) => { lm[i] = { x: 1 - x, y, visibility: 0.99 }; }; // 앱이 좌우 반전하므로 미리 뒤집음
+  const k = 0.5 - 0.5 * Math.cos(t * 2.2), arm = (20 + k * 140) * Math.PI / 180, leg = (6 + k * 22) * Math.PI / 180;
+  const hipY = 0.66, shY = 0.44, ar = 16 / 9;
+  set(0, cx, 0.33); set(11, cx - 0.045, shY); set(12, cx + 0.045, shY); set(23, cx - 0.03, hipY); set(24, cx + 0.03, hipY);
+  for (const [s, e, w, dir] of [[11, 13, 15, -1], [12, 14, 16, 1]]) {
+    const sx = lm[s].x === undefined ? 0 : 1 - lm[s].x;
+    const dx = Math.sin(arm) * dir / ar, dy = Math.cos(arm);
+    set(e, sx + dx * 0.12, shY + dy * 0.12); set(w, sx + dx * 0.23, shY + dy * 0.23);
+  }
+  for (const [h, kn, an, dir] of [[23, 25, 27, -1], [24, 26, 28, 1]]) {
+    const hx = 1 - lm[h].x, dx = Math.sin(leg) * dir / ar, dy = Math.cos(leg);
+    set(kn, hx + dx * 0.14, hipY + dy * 0.14); set(an, hx + dx * 0.27, hipY + dy * 0.27);
+  }
+  return lm;
+}
+
 async function init() {
   keepAwake();
+  if (DEMO) { status = ''; return; }
   try {
     await chooseCamera();
     showToast(`카메라: ${camLabel}`);
@@ -259,7 +342,7 @@ function angleBetween(ax, ay, bx, by) {
 }
 
 function ingest(list, masks = []) {
-  const vw = video.videoWidth, vh = video.videoHeight;
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
   const items = list
     .map((lm, i) => Object.assign(lm, { mask: masks[i] }))
     // 어깨만 보여도 인식(가까이 서거나 골반이 화면 밖이어도 MediaPipe가 골반 위치를 추정해 줌)
@@ -416,14 +499,54 @@ function bodyShape(c, P, s, col) {
   c.beginPath(); c.arc(P.head.x, P.head.y, s * 0.3, 0, Math.PI * 2); c.fill();
   c.restore();
 }
+let imprintDirty = true;
 function stamp(tr) {
-  bodyShape(shade.getContext('2d'), tr.pts, tr.s, '#8ea3c4');
-  bodyShape(dent.getContext('2d'), tr.pts, tr.s, '#c6d4e8');
+  bodyShape(dent.getContext('2d'), tr.pts, tr.s, '#ffffff'); // dent = 눌린 모양 마스크
   tr.angelHead = { ...tr.pts.head }; tr.angelS = tr.s;
+  imprintDirty = true;
 }
 
 function clearImprint() {
-  for (const c of [dent, shade]) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+  for (const c of [dent, shade, tmpA]) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+  imprintDirty = true;
+}
+
+// 마스크로 눈에 눌린 자국을 입체적으로 합성: 바깥 둔덕 하이라이트 + 바닥 그늘 + 위쪽 안벽 그림자
+function composeImprint() {
+  if (!imprintDirty) return;
+  imprintDirty = false;
+  const w = dent.width, h = dent.height, u = DPR * IMP * Math.min(W / DPR / 1920, H / DPR / 1080) * 1.6 + 0.5;
+  const out = shade.getContext('2d'), t = tmpA.getContext('2d');
+  out.clearRect(0, 0, w, h);
+  const layer = (color, blur, dx, dy, cutMask, alpha = 1) => {
+    t.globalCompositeOperation = 'source-over'; t.clearRect(0, 0, w, h);
+    t.filter = blur ? `blur(${blur}px)` : 'none'; t.drawImage(dent, dx, dy); t.filter = 'none';
+    t.globalCompositeOperation = 'source-in'; t.fillStyle = color; t.fillRect(0, 0, w, h);
+    if (cutMask) { t.globalCompositeOperation = cutMask; t.drawImage(dent, 0, 0); }
+    t.globalCompositeOperation = 'source-over';
+    out.globalAlpha = alpha; out.drawImage(tmpA, 0, 0); out.globalAlpha = 1;
+  };
+  // 밀려 올라온 눈 둔덕(바깥 가장자리, 위쪽이 더 밝음)
+  layer('#ffffff', 10 * u, 0, -3 * u, 'destination-out', 1);
+  layer('#ffffff', 4 * u, 0, -1 * u, 'destination-out', 0.9);
+  // 둔덕 아래쪽 바깥 그늘
+  layer('#7f97c0', 6 * u, 0, 5 * u, 'destination-out', 0.3);
+  // 눌린 바닥: 차가운 푸른 그늘(가장자리는 살짝 부드럽게)
+  layer('#c2d2ea', 1.2 * u, 0, 0, null, 0.8);
+  // 안벽 그림자: 마스크를 아래로 밀어 위쪽 안쪽 가장자리만 남김
+  t.globalCompositeOperation = 'source-over'; t.clearRect(0, 0, w, h);
+  t.fillStyle = '#5f78a6'; t.fillRect(0, 0, w, h);
+  t.globalCompositeOperation = 'destination-out'; t.filter = `blur(${6 * u}px)`; t.drawImage(dent, 2 * u, 9 * u); t.filter = 'none';
+  t.globalCompositeOperation = 'destination-in'; t.filter = `blur(${0.8 * u}px)`; t.drawImage(dent, 0, 0); t.filter = 'none';
+  t.globalCompositeOperation = 'source-over';
+  out.globalAlpha = 0.85; out.drawImage(tmpA, 0, 0); out.globalAlpha = 1;
+  // 아래쪽 안벽에 비치는 빛
+  t.clearRect(0, 0, w, h);
+  t.fillStyle = '#ffffff'; t.fillRect(0, 0, w, h);
+  t.globalCompositeOperation = 'destination-out'; t.filter = `blur(${4 * u}px)`; t.drawImage(dent, 0, -5 * u); t.filter = 'none';
+  t.globalCompositeOperation = 'destination-in'; t.drawImage(dent, 0, 0);
+  t.globalCompositeOperation = 'source-over';
+  out.globalAlpha = 0.55; out.drawImage(tmpA, 0, 0); out.globalAlpha = 1;
 }
 
 /* ───────── 비상하는 천사 ───────── */
@@ -432,11 +555,16 @@ let sparks = [];
 function buildAngel() {
   const w = dent.width, h = dent.height;
   const tint = mk(w, h), t = tint.getContext('2d');
-  t.drawImage(dent, 0, 0); t.globalCompositeOperation = 'source-in'; t.fillStyle = '#fffaf0'; t.fillRect(0, 0, w, h);
+  t.filter = `blur(${1.2 * IMP * DPR}px)`; t.drawImage(dent, 0, 0); t.filter = 'none';
+  t.globalCompositeOperation = 'source-in';
+  const tg = t.createLinearGradient(0, 0, 0, h); // 위는 흰빛, 아래로 갈수록 금빛
+  tg.addColorStop(0, '#ffffff'); tg.addColorStop(0.5, '#ffeec8'); tg.addColorStop(1, '#ffc86e');
+  t.fillStyle = tg; t.fillRect(0, 0, w, h);
   const sprite = mk(w, h), g = sprite.getContext('2d');
-  g.shadowColor = 'rgba(255,205,120,0.95)';
-  g.shadowBlur = 40 * IMP * DPR; g.drawImage(tint, 0, 0);
-  g.shadowBlur = 14 * IMP * DPR; g.drawImage(tint, 0, 0);
+  g.shadowColor = 'rgba(255,196,100,0.9)';
+  g.globalAlpha = 0.8; g.shadowBlur = 60 * IMP * DPR; g.drawImage(tint, 0, 0);
+  g.globalAlpha = 1; g.shadowBlur = 18 * IMP * DPR; g.drawImage(tint, 0, 0);
+  g.globalAlpha = 1;
   // 머리 위 후광
   for (const tr of tracks) {
     if (!tr.angelHead) continue;
@@ -490,7 +618,8 @@ function glowSprite() {
   if (glow) return glow;
   glow = mk(128, 128); const g = glow.getContext('2d');
   const rg = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  rg.addColorStop(0, 'rgba(255,255,255,0.95)'); rg.addColorStop(0.25, 'rgba(225,238,255,0.55)'); rg.addColorStop(1, 'rgba(200,220,255,0)');
+  // 흰 눈 위에서 보이도록 따뜻한 금빛
+  rg.addColorStop(0, 'rgba(255,248,225,0.95)'); rg.addColorStop(0.25, 'rgba(255,210,130,0.5)'); rg.addColorStop(1, 'rgba(255,190,110,0)');
   g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
   return glow;
 }
@@ -500,20 +629,27 @@ function render(dt) {
   ctx.drawImage(bg, 0, 0);
 
   // 눈 결 반짝임
+  ctx.globalCompositeOperation = 'lighter';
   for (const g of glints) {
-    const a = Math.pow(Math.max(0, Math.sin(now * g.sp + g.ph)), 12);
+    const a = Math.pow(Math.max(0, Math.sin(now * g.sp + g.ph)), 14);
     if (a < 0.02) continue;
-    const r = 5 * DPR * a;
-    ctx.strokeStyle = `rgba(255,255,255,${a})`; ctx.lineWidth = DPR;
-    ctx.beginPath(); ctx.moveTo(g.x - r, g.y); ctx.lineTo(g.x + r, g.y); ctx.moveTo(g.x, g.y - r); ctx.lineTo(g.x, g.y + r); ctx.stroke();
+    const col = g.warm ? '255,236,200' : '225,240,255';
+    ctx.fillStyle = `rgba(${col},${a * 0.9})`;
+    ctx.beginPath(); ctx.arc(g.x, g.y, (g.big ? 1.6 : 1) * DPR, 0, Math.PI * 2); ctx.fill();
+    if (g.big) {
+      const r = 7 * DPR * a;
+      ctx.strokeStyle = `rgba(${col},${a * 0.7})`; ctx.lineWidth = 0.8 * DPR;
+      ctx.beginPath(); ctx.moveTo(g.x - r, g.y); ctx.lineTo(g.x + r, g.y); ctx.moveTo(g.x, g.y - r * 0.7); ctx.lineTo(g.x, g.y + r * 0.7); ctx.stroke();
+    }
   }
+  ctx.globalCompositeOperation = 'source-over';
 
   // 자국
   const impAlpha = state === 'cover' ? 1 - ease(clamp(st / CFG.cover, 0, 1)) : 1;
   if (impAlpha > 0.01) {
+    composeImprint();
     ctx.globalAlpha = impAlpha; ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(shade, 0, -6 * DPR, W, H);
-    ctx.drawImage(dent, 0, 0, W, H);
+    ctx.drawImage(shade, 0, 0, W, H);
     ctx.globalAlpha = 1;
   }
 
@@ -566,7 +702,10 @@ function render(dt) {
       if (f.extra) { f.dead = true; continue; }
       Object.assign(f, newFlake(false));
     }
-    ctx.fillStyle = `rgba(255,255,255,${0.45 + f.z * 0.5})`;
+    // 흰 바닥 위에서도 보이도록 옅은 푸른 그림자를 먼저 깐다
+    ctx.fillStyle = `rgba(90,118,165,${0.12 + f.z * 0.22})`;
+    ctx.beginPath(); ctx.arc(f.x + f.r * 0.35, f.y + f.r * 0.45, f.r * 1.15, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `rgba(255,255,255,${0.75 + f.z * 0.25})`;
     ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
   }
   if (flakes.some(f => f.dead)) flakes = flakes.filter(f => !f.dead);
@@ -584,8 +723,9 @@ function text(str, x, y, size, weight = 500, alpha = 1, spacing = 0) {
   ctx.font = `${weight} ${size * DPR}px ${FONT}`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if ('letterSpacing' in ctx) ctx.letterSpacing = `${spacing * DPR}px`;
-  ctx.shadowColor = 'rgba(30,50,90,0.45)'; ctx.shadowBlur = 14 * DPR;
-  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+  // 밝은 눈 위에서도 읽히게: 짙은 남색 글자 + 흰 번짐
+  ctx.shadowColor = `rgba(255,255,255,${0.9 * alpha})`; ctx.shadowBlur = 18 * DPR;
+  ctx.fillStyle = `rgba(28,48,84,${alpha})`;
   ctx.fillText(str, x, y);
   ctx.shadowBlur = 0;
   if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
@@ -605,8 +745,8 @@ function drawText() {
     const p = sessionProgress();
     text(p < 0.5 ? '팔을 위아래로 크게 휘저어 날개를 만들어요' : '다리도 벌렸다 모으며 치마를 그려요', cx, H * 0.05, 28 * u, 600);
     const bw = W * 0.22, bh = 6 * DPR * u, by = H * 0.085;
-    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fillRect(cx - bw / 2, by, bw, bh);
-    ctx.fillStyle = 'rgba(255,236,190,0.95)'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / 0.9, 0, 1), bh);
+    ctx.fillStyle = 'rgba(40,64,110,0.15)'; ctx.fillRect(cx - bw / 2, by, bw, bh);
+    ctx.fillStyle = 'rgba(226,170,72,0.95)'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / 0.9, 0, 1), bh);
   } else if (state === 'rise') {
     const p = st / CFG.rise, a = p < 0.2 ? p / 0.2 : p > 0.8 ? (1 - p) / 0.2 : 1;
     text('Merry Christmas', cx, H * 0.06, 52 * u, 700, a, 2 * u);
@@ -648,6 +788,7 @@ function frame(ts) {
     try { landmarker.detectForVideo(video, ts, res => ingest(res.landmarks || [], res.segmentationMasks || [])); }
     catch (e) { console.error(e); }
   }
+  if (DEMO) ingest([demoPose(now, 0.33), demoPose(now + 0.7, 0.67)]);
   updateState(dt);
   render(dt);
   requestAnimationFrame(frame);
