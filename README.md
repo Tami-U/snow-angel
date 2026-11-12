@@ -10,14 +10,22 @@
 4. **덮임**: 눈이 흔적을 덮고 처음으로 돌아갑니다(3.5초).
 
 - 동시에 1~2명이 참여합니다(화면 왼쪽과 오른쪽 자리).
+- 가로형 TV에서는 인식된 사람의 배경 제거 미리보기와 각자의 진행도가 화면 하단 왼쪽·오른쪽 카드에 표시됩니다. 중앙 눈밭에는 몸짓으로 만든 자국이 남습니다.
 - 몸통 길이를 기준으로 크기를 맞추기 때문에 카메라와의 거리와 관계없이 천사가 같은 크기로 그려집니다.
 - 영상은 저장하지 않고 브라우저 안에서 실시간으로만 처리합니다.
+- Web Audio API가 바람 소리, 몸짓 중 눈 쓸리는 소리, 덮임 소리, 비상할 때의 차임을 브라우저에서 만듭니다.
+- 배경음악은 피아노 캐롤 **Joy to the World**를 반복 재생합니다. 비상 단계에서는 차임이 들리도록 음악 볼륨을 낮춥니다.
 
 ## 기술
 
 - [MediaPipe Pose Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (`@mediapipe/tasks-vision` 0.10.18, `pose_landmarker_lite` 모델)
 - 런타임(`vendor/`)과 모델(`models/`)을 레포에 포함해 **인터넷 없이** 동작합니다.
-- 빌드 과정 없이 HTML 파일 하나로 실행합니다.
+- 빌드 과정 없이 로컬 서버에서 `index.html`을 실행합니다.
+- 배경음악 파일은 `assets/joy-to-the-world-piano.ogg`에 포함되어 오프라인에서도 재생됩니다.
+
+### 배경음악 출처
+
+- [Joy to the World (piano)](https://commons.wikimedia.org/wiki/File:Joy_to_the_World_(piano).ogg), 연주·녹음: Wikimedia Commons 사용자 Orthologist. 권리자가 전 세계 퍼블릭 도메인으로 공개한 음원입니다.
 
 ## 공유 링크
 
@@ -50,6 +58,7 @@ chrome --kiosk --autoplay-policy=no-user-gesture-required --use-fake-ui-for-medi
 | `F` | 전체화면 |
 | `R` | 처음으로 초기화 |
 | `C` | 카메라 전환(선택한 카메라는 기억됨) |
+| `M` | 소리 끄기/켜기 |
 
 ## 설치 메모 (노트북 + TV + TV 위 웹캠)
 

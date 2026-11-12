@@ -7,13 +7,38 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #b9c9e0; }
   body { cursor: none; }
-  canvas { display: block; width: 100vw; height: 100vh; }
+  #c { display: block; width: 100vw; height: 100vh; }
   video { display: none; }
+  #people-ui { position: fixed; inset: auto clamp(16px, 3vw, 52px) clamp(16px, 3vh, 40px); display: flex; justify-content: space-between; pointer-events: none; }
+  .person-card { width: clamp(150px, 15vw, 240px); padding: 10px; color: #f5faff; background: rgba(24, 48, 77, 0.74); border: 1px solid rgba(235, 246, 255, 0.25); border-radius: 16px; box-shadow: 0 14px 40px rgba(42, 65, 105, 0.22); font: 500 clamp(12px, 1vw, 16px) / 1.4 "Pretendard", "Malgun Gothic", sans-serif; opacity: 0.62; transition: opacity 0.25s, border-color 0.25s; }
+  .person-card[data-active="true"] { opacity: 1; border-color: rgba(255, 250, 220, 0.8); }
+  .person-head, .person-meta { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .person-head { margin: 2px 3px 8px; font-weight: 700; }
+  .person-head span:last-child { color: #c9ddf5; font-size: 0.78em; font-weight: 500; }
+  .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 9px; background: linear-gradient(#8fa9ca, #d7e4f3); }
+  .person-meta { margin: 9px 3px 7px; font-size: 0.82em; }
+  .person-progress { height: 4px; overflow: hidden; border-radius: 4px; background: rgba(255, 255, 255, 0.23); }
+  .person-progress span { display: block; height: 100%; width: 0; background: #fff1c6; transition: width 0.2s; }
+  @media (max-width: 800px) { .person-card { width: clamp(120px, 22vw, 170px); padding: 7px; } }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <video id="v" playsinline muted></video>
+<div id="people-ui" aria-label="참가자 인식 미리보기">
+  <aside class="person-card" id="person-left" data-active="false" aria-label="왼쪽 참가자">
+    <div class="person-head"><span>왼쪽 자리</span><span>01</span></div>
+    <canvas class="person-preview" width="240" height="300"></canvas>
+    <div class="person-meta"><span class="person-status">자리에 서 주세요</span><span class="person-percent">0%</span></div>
+    <div class="person-progress"><span></span></div>
+  </aside>
+  <aside class="person-card" id="person-right" data-active="false" aria-label="오른쪽 참가자">
+    <div class="person-head"><span>오른쪽 자리</span><span>02</span></div>
+    <canvas class="person-preview" width="240" height="300"></canvas>
+    <div class="person-meta"><span class="person-status">자리에 서 주세요</span><span class="person-percent">0%</span></div>
+    <div class="person-progress"><span></span></div>
+  </aside>
+</div>
 
 <script type="module">
 import { PoseLandmarker, FilesetResolver } from './vendor/tasks-vision/vision_bundle.mjs';
@@ -36,6 +61,10 @@ const IMP = 0.5; // 자국 캔버스 해상도 비율(부드러운 가장자리 
 const cv = document.getElementById('c');
 const ctx = cv.getContext('2d');
 const video = document.getElementById('v');
+const personCards = ['person-left', 'person-right'].map(id => {
+  const el = document.getElementById(id), canvas = el.querySelector('canvas');
+  return { el, canvas, ctx: canvas.getContext('2d'), status: el.querySelector('.person-status'), percent: el.querySelector('.person-percent'), bar: el.querySelector('.person-progress span') };
+});
 const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
 const dent = mk(1, 1), shade = mk(1, 1); // 눌린 눈(밝은 면) / 안쪽 그림자
 let W = 0, H = 0, DPR = 1, bg = null, glints = [], flakes = [];
@@ -83,26 +112,46 @@ function newFlake(anywhere) {
 }
 
 /* ───────── 오디오 (첫 클릭/키 입력 또는 자동재생 허용 시) ───────── */
-let actx = null;
+let actx = null, masterGain = null, windGain = null, snowGain = null, musicGain = null, muted = false;
+const music = new Audio('./assets/joy-to-the-world-piano.ogg');
+music.loop = true;
 function audioOn() {
   try {
     if (!actx) { actx = new AudioContext(); startWind(); }
     if (actx.state === 'suspended') actx.resume();
+    if (music.paused) music.play().catch(() => {});
   } catch (e) { /* 오디오 없음 */ }
 }
 addEventListener('pointerdown', audioOn);
 addEventListener('keydown', audioOn);
 
 function startWind() {
+  masterGain = actx.createGain(); masterGain.gain.value = 0;
+  masterGain.connect(actx.destination);
   const len = actx.sampleRate * 3, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
   const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
   const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 420; bp.Q.value = 0.6;
-  const g = actx.createGain(); g.gain.value = 0.018;
-  src.connect(bp).connect(g).connect(actx.destination); src.start();
+  windGain = actx.createGain(); windGain.gain.value = 0;
+  src.connect(bp).connect(windGain).connect(masterGain);
+  const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1300;
+  snowGain = actx.createGain(); snowGain.gain.value = 0;
+  src.connect(hp).connect(snowGain).connect(masterGain);
+  musicGain = actx.createGain(); musicGain.gain.value = 0;
+  actx.createMediaElementSource(music).connect(musicGain).connect(masterGain);
+  src.start();
+  setAudioLevels();
+}
+function setAudioLevels() {
+  if (!actx || !masterGain || !windGain || !snowGain || !musicGain) return;
+  const t = actx.currentTime;
+  masterGain.gain.setTargetAtTime(muted ? 0 : 1, t, 0.1);
+  windGain.gain.setTargetAtTime(0.018, t, 0.2);
+  snowGain.gain.setTargetAtTime(state === 'cover' ? 0.035 : state === 'draw' ? 0.012 : 0, t, 0.25);
+  musicGain.gain.setTargetAtTime(state === 'rise' ? 0.07 : 0.14, t, 0.5);
 }
 function chime() {
-  if (!actx || actx.state !== 'running') return;
+  if (muted || !actx || actx.state !== 'running') return;
   const notes = [783.99, 987.77, 1174.66, 1567.98, 1975.53];
   notes.forEach((f, i) => {
     const t = actx.currentTime + i * 0.13;
@@ -111,7 +160,7 @@ function chime() {
       o.type = type; o.frequency.value = f * mul;
       g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.01);
       g.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
-      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 3);
+      o.connect(g).connect(masterGain); o.start(t); o.stop(t + 3);
     }
   });
 }
@@ -243,7 +292,6 @@ function updateTrack(tr, lm, vw, vh) {
   tr.k = sc; tr.ax = ox + hip.x * sc; tr.ay = oy + hip.y * sc;
   tr.s = torso * tr.k;
 
-  tr.hipV = hip;
   if (lm.mask) { try { updateCutout(tr, lm.mask, vw, vh); } catch (e) { console.warn(e); tr.hasCut = false; } }
   else tr.hasCut = false;
 
@@ -270,7 +318,7 @@ function updateTrack(tr, lm, vw, vh) {
   tr.used = true;
 }
 
-/* ───────── 사람 누끼: 배경을 지우고 사람만 눈밭 위에 ───────── */
+/* ───────── 사람 누끼: 배경을 지우고 하단 미리보기에 표시 ───────── */
 const CUT = 0.75; // 누끼 해상도(카메라 대비) — 얼굴이 선명하게
 function updateCutout(tr, mask, vw, vh) {
   const cw = Math.round(vw * CUT), ch = Math.round(vh * CUT);
@@ -296,23 +344,42 @@ function updateCutout(tr, mask, vw, vh) {
   tr.hasCut = true;
 }
 
-function drawPeople() {
-  for (const tr of tracks) {
-    if (!present(tr) || !tr.hasCut || !tr.pts) continue;
-    const fade = clamp((now - tr.firstSeen) / 0.5, 0, 1) * clamp(1 - (now - tr.lastSeen) / 0.4, 0, 1);
-    const k = tr.k / CUT;
-    const x = tr.ax - tr.hipV.x * tr.k, y = tr.ay - tr.hipV.y * tr.k;
-    // 발밑 그림자: 눈바닥 위에 서 있는 느낌
-    const P = tr.pts, footY = Math.max(vis(P.lAn) > 0.4 ? P.lAn.y : 0, vis(P.rAn) > 0.4 ? P.rAn.y : 0, tr.ay + tr.s * 1.5);
-    ctx.save(); ctx.globalAlpha = fade;
-    ctx.translate(tr.ax, footY); ctx.scale(1, 0.16);
-    const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, tr.s * 0.9);
-    sg.addColorStop(0, 'rgba(60,85,130,0.35)'); sg.addColorStop(1, 'rgba(60,85,130,0)');
-    ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(0, 0, tr.s * 0.9, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-    ctx.save(); ctx.globalAlpha = fade; ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(tr.cut, x, y, tr.cut.width * k, tr.cut.height * k);
-    ctx.restore();
+function drawPersonCards() {
+  for (let i = 0; i < tracks.length; i++) {
+    const tr = tracks[i], card = personCards[i], g = card.ctx;
+    const active = present(tr) && tr.sm && video.videoWidth && video.videoHeight;
+    card.el.dataset.active = String(!!active);
+    const progress = active && state === 'draw' ? Math.round(trackProgress(tr) * 100) : 0;
+    card.status.textContent = !active ? '자리에 서 주세요' : state === 'draw' ? '천사 만드는 중' : state === 'rise' ? '천사 완성!' : '사람 인식됨';
+    card.percent.textContent = `${progress}%`;
+    card.bar.style.width = `${progress}%`;
+    g.clearRect(0, 0, card.canvas.width, card.canvas.height);
+    if (!active) continue;
+
+    const points = tr.sm.filter(p => p.v > 0.35 && p.x >= 0 && p.x <= video.videoWidth && p.y >= 0 && p.y <= video.videoHeight);
+    if (!points.length) continue;
+    const xs = points.map(p => p.x), ys = points.map(p => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), maxY = Math.max(...ys);
+    const shoulderY = (tr.sm[11].y + tr.sm[12].y) / 2, hipY = (tr.sm[23].y + tr.sm[24].y) / 2;
+    const minY = Math.min(Math.min(...ys), shoulderY - Math.abs(hipY - shoulderY) * 0.7);
+    const ratio = card.canvas.width / card.canvas.height;
+    let h = Math.max((maxY - minY) * 1.25, 180), w = h * ratio;
+    if (w < (maxX - minX) * 1.25) { w = (maxX - minX) * 1.25; h = w / ratio; }
+    const fit = Math.min(1, video.videoWidth / w, video.videoHeight / h);
+    w *= fit; h *= fit;
+    const x = clamp((minX + maxX - w) / 2, 0, video.videoWidth - w);
+    const y = clamp((minY + maxY - h) / 2, 0, video.videoHeight - h);
+    if (tr.hasCut) {
+      g.drawImage(tr.cut, x * CUT, y * CUT, w * CUT, h * CUT, 0, 0, card.canvas.width, card.canvas.height);
+    } else {
+      const dot = p => ({ x: (p.x - x) / w * card.canvas.width, y: (p.y - y) / h * card.canvas.height });
+      g.strokeStyle = '#f6fdff'; g.lineWidth = 4; g.lineCap = 'round';
+      for (const [a, b] of [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]]) {
+        if (tr.sm[a].v < 0.35 || tr.sm[b].v < 0.35) continue;
+        const p = dot(tr.sm[a]), q = dot(tr.sm[b]);
+        g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(q.x, q.y); g.stroke();
+      }
+    }
   }
 }
 
@@ -350,22 +417,6 @@ function stamp(tr) {
   tr.angelHead = { ...tr.pts.head }; tr.angelS = tr.s;
 }
 
-// 지금 서 있는 사람의 모습(빛나는 실루엣) — 첫 화면부터 자기 몸을 바로 볼 수 있게
-const ghost = mk(1, 1);
-function drawGhosts() {
-  const live = tracks.filter(tr => present(tr) && tr.pts && !tr.hasCut); // 누끼가 없을 때만 대체 실루엣
-  if (!live.length) return;
-  if (ghost.width !== dent.width || ghost.height !== dent.height) { ghost.width = dent.width; ghost.height = dent.height; }
-  const g = ghost.getContext('2d');
-  g.clearRect(0, 0, ghost.width, ghost.height);
-  for (const tr of live) bodyShape(g, tr.pts, tr.s, '#ffffff');
-  const fade = Math.min(...live.map(tr => clamp((now - tr.firstSeen) / 0.5, 0, 1)));
-  ctx.save();
-  ctx.globalAlpha = (state === 'draw' ? 0.5 : 0.7) * fade;
-  ctx.shadowColor = 'rgba(190,215,255,0.95)'; ctx.shadowBlur = 30 * DPR;
-  ctx.drawImage(ghost, 0, 0, W, H);
-  ctx.restore();
-}
 function clearImprint() {
   for (const c of [dent, shade]) c.getContext('2d').clearRect(0, 0, c.width, c.height);
 }
@@ -403,6 +454,7 @@ function go(s) {
   if (s === 'rise') { buildAngel(); chime(); }
   if (s === 'cover') { for (let i = 0; i < flakes.length * 0.8; i++) flakes.push({ ...newFlake(false), y: -Math.random() * H * 0.5, extra: true }); }
   if (s === 'idle') { clearImprint(); angel = null; sparks = []; }
+  setAudioLevels();
 }
 function sessionProgress() { return Math.max(...tracks.map(trackProgress)); }
 
@@ -460,9 +512,8 @@ function render(dt) {
     ctx.globalAlpha = 1;
   }
 
-  // 사람(배경 제거) — 첫 화면부터 항상
-  drawPeople();
-  drawGhosts();
+  // 감지된 사람은 아래쪽 개별 카드에 표시
+  drawPersonCards();
 
   // 비상
   if (state === 'rise' && angel) {
@@ -558,7 +609,7 @@ function drawText() {
   }
 }
 
-/* ───────── 운영자용: D 디버그, F 전체화면, R 초기화 ───────── */
+/* ───────── 운영자용: D 디버그, F 전체화면, R 초기화, M 소리 ───────── */
 let debug = false, fps = 60;
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
@@ -566,9 +617,10 @@ addEventListener('keydown', e => {
   if (k === 'f') (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
   if (k === 'r') go('idle');
   if (k === 'c') nextCamera();
+  if (k === 'm') { muted = !muted; setAudioLevels(); showToast(muted ? '소리 꺼짐' : '소리 켜짐'); }
 });
 function drawDebug() {
-  const w = 320 * DPR, h = video.videoHeight ? w * video.videoHeight / video.videoWidth : w * 9 / 16, x = W - w - 16 * DPR, y = H - h - 16 * DPR;
+  const w = 320 * DPR, h = video.videoHeight ? w * video.videoHeight / video.videoWidth : w * 9 / 16, x = W - w - 16 * DPR, y = 80 * DPR;
   if (video.readyState >= 2) { ctx.save(); ctx.translate(x + w, y); ctx.scale(-1, 1); ctx.drawImage(video, 0, 0, w, h); ctx.restore(); }
   for (const tr of tracks) if (present(tr) && tr.pts) {
     ctx.fillStyle = '#ff5a7a';
