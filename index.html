@@ -212,7 +212,8 @@ function angleBetween(ax, ay, bx, by) {
 function ingest(list) {
   const vw = video.videoWidth, vh = video.videoHeight;
   const items = list
-    .filter(lm => [11, 12, 23, 24].every(i => vis({ v: lm[i].visibility }) > 0.5))
+    // 어깨만 보여도 인식(가까이 서거나 골반이 화면 밖이어도 MediaPipe가 골반 위치를 추정해 줌)
+    .filter(lm => [11, 12].every(i => vis({ v: lm[i].visibility }) > 0.5))
     .map(lm => ({ lm, hx: 1 - (lm[23].x + lm[24].x) / 2 }))
     .sort((a, b) => a.hx - b.hx);
   const assign = [null, null];
@@ -282,21 +283,39 @@ function limb(c, pts, width) {
     c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
   }
 }
+function bodyShape(c, P, s, col) {
+  c.save(); c.scale(IMP, IMP);
+  c.strokeStyle = c.fillStyle = col; c.lineCap = c.lineJoin = 'round';
+  limb(c, [P.lSh, P.lEl, P.lWr], s * 0.24); limb(c, [P.rSh, P.rEl, P.rWr], s * 0.24);
+  limb(c, [P.lHip, P.lKn, P.lAn], s * 0.3); limb(c, [P.rHip, P.rKn, P.rAn], s * 0.3);
+  c.lineWidth = s * 0.3;
+  c.beginPath(); c.moveTo(P.lSh.x, P.lSh.y); c.lineTo(P.rSh.x, P.rSh.y); c.lineTo(P.rHip.x, P.rHip.y); c.lineTo(P.lHip.x, P.lHip.y); c.closePath();
+  c.fill(); c.stroke();
+  c.lineWidth = s * 0.2; c.beginPath(); c.moveTo(P.shM.x, P.shM.y); c.lineTo(P.head.x, P.head.y); c.stroke();
+  c.beginPath(); c.arc(P.head.x, P.head.y, s * 0.3, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
 function stamp(tr) {
-  const P = tr.pts, s = tr.s;
-  for (const [c, col] of [[shade.getContext('2d'), '#8ea3c4'], [dent.getContext('2d'), '#c6d4e8']]) {
-    c.save(); c.scale(IMP, IMP);
-    c.strokeStyle = c.fillStyle = col; c.lineCap = c.lineJoin = 'round';
-    limb(c, [P.lSh, P.lEl, P.lWr], s * 0.24); limb(c, [P.rSh, P.rEl, P.rWr], s * 0.24);
-    limb(c, [P.lHip, P.lKn, P.lAn], s * 0.3); limb(c, [P.rHip, P.rKn, P.rAn], s * 0.3);
-    c.lineWidth = s * 0.3;
-    c.beginPath(); c.moveTo(P.lSh.x, P.lSh.y); c.lineTo(P.rSh.x, P.rSh.y); c.lineTo(P.rHip.x, P.rHip.y); c.lineTo(P.lHip.x, P.lHip.y); c.closePath();
-    c.fill(); c.stroke();
-    c.lineWidth = s * 0.2; c.beginPath(); c.moveTo(P.shM.x, P.shM.y); c.lineTo(P.head.x, P.head.y); c.stroke();
-    c.beginPath(); c.arc(P.head.x, P.head.y, s * 0.3, 0, Math.PI * 2); c.fill();
-    c.restore();
-  }
-  tr.angelHead = { ...P.head }; tr.angelS = s;
+  bodyShape(shade.getContext('2d'), tr.pts, tr.s, '#8ea3c4');
+  bodyShape(dent.getContext('2d'), tr.pts, tr.s, '#c6d4e8');
+  tr.angelHead = { ...tr.pts.head }; tr.angelS = tr.s;
+}
+
+// 지금 서 있는 사람의 모습(빛나는 실루엣) — 첫 화면부터 자기 몸을 바로 볼 수 있게
+const ghost = mk(1, 1);
+function drawGhosts() {
+  const live = tracks.filter(tr => present(tr) && tr.pts);
+  if (!live.length) return;
+  if (ghost.width !== dent.width || ghost.height !== dent.height) { ghost.width = dent.width; ghost.height = dent.height; }
+  const g = ghost.getContext('2d');
+  g.clearRect(0, 0, ghost.width, ghost.height);
+  for (const tr of live) bodyShape(g, tr.pts, tr.s, '#ffffff');
+  const fade = Math.min(...live.map(tr => clamp((now - tr.firstSeen) / 0.5, 0, 1)));
+  ctx.save();
+  ctx.globalAlpha = (state === 'draw' ? 0.5 : 0.7) * fade;
+  ctx.shadowColor = 'rgba(190,215,255,0.95)'; ctx.shadowBlur = 30 * DPR;
+  ctx.drawImage(ghost, 0, 0, W, H);
+  ctx.restore();
 }
 function clearImprint() {
   for (const c of [dent, shade]) c.getContext('2d').clearRect(0, 0, c.width, c.height);
@@ -419,6 +438,7 @@ function render(dt) {
 
   // 손·발 빛 (몸짓이 잘 잡히고 있다는 피드백)
   if (state === 'idle' || state === 'draw') {
+    drawGhosts();
     const gs = glowSprite();
     for (const tr of tracks) {
       if (!present(tr) || !tr.pts) continue;
