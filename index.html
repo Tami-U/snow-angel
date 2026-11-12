@@ -16,7 +16,7 @@
   .person-head, .person-meta { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
   .person-head { margin: 2px 3px 8px; font-weight: 700; }
   .person-head span:last-child { color: #6d82a8; font-size: 0.78em; font-weight: 600; letter-spacing: 0.08em; }
-  .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 11px; background: url('./assets/snow-angel-mark.png') center / 76px auto no-repeat, radial-gradient(120% 80% at 50% 100%, #ffffff, #dfe8f4 60%, #c8d6ea); box-shadow: inset 0 2px 8px rgba(70, 95, 140, 0.18); }
+  .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 11px; background: url('./assets/snow-angel-mark.png') center / min(150px, 75%) auto no-repeat, radial-gradient(120% 80% at 50% 100%, #ffffff, #dfe8f4 60%, #c8d6ea); box-shadow: inset 0 2px 8px rgba(70, 95, 140, 0.18); }
   .person-card[data-active="true"] .person-preview { background: #dfe8f4; }
   .person-meta { margin: 9px 3px 7px; font-size: 0.82em; color: #3a5079; }
   .person-progress { height: 5px; overflow: hidden; border-radius: 5px; background: rgba(40, 64, 110, 0.12); }
@@ -161,14 +161,39 @@ function buildBackground() {
 }
 
 function buildSnow() {
-  const n = Math.round((W * H) / (1920 * 1080 * DPR * DPR) * 320) + 120;
+  const n = Math.round((W * H) / (1920 * 1080 * DPR * DPR) * 125) + 50;
   flakes = Array.from({ length: n }, () => newFlake(true));
 }
+function makeFlakeSprite() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 96;
+  const g = canvas.getContext('2d');
+  g.translate(48, 48);
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const crystal = () => {
+    for (let arm = 0; arm < 6; arm++) {
+      g.save(); g.rotate(arm * Math.PI / 3);
+      g.moveTo(0, 0); g.lineTo(0, -38);
+      for (const y of [-18, -28]) {
+        const length = y === -18 ? 10 : 7;
+        g.moveTo(0, y); g.lineTo(-length, y - length * 0.75);
+        g.moveTo(0, y); g.lineTo(length, y - length * 0.75);
+      }
+      g.restore();
+    }
+  };
+  g.beginPath(); crystal();
+  g.strokeStyle = 'rgba(65, 107, 163, .65)'; g.lineWidth = 5;
+  g.shadowColor = 'rgba(55, 98, 155, .45)'; g.shadowBlur = 5; g.stroke();
+  g.shadowBlur = 0; g.strokeStyle = '#fff'; g.lineWidth = 2.5; g.stroke();
+  return canvas;
+}
+const flakeSprite = makeFlakeSprite();
 function newFlake(anywhere) {
   const z = Math.random();
   return {
     x: Math.random() * W, y: anywhere ? Math.random() * H : -10 * DPR,
-    r: (0.8 + z * 3.2) * DPR, vy: (25 + z * 70) * DPR, ph: Math.random() * 6.28, z,
+    r: (5 + z * 6) * DPR, vy: (25 + z * 70) * DPR, ph: Math.random() * 6.28, z,
     extra: false,
   };
 }
@@ -439,19 +464,11 @@ function drawPersonCards() {
     g.clearRect(0, 0, card.canvas.width, card.canvas.height);
     if (!active) continue;
 
-    const points = tr.sm.filter(p => p.v > 0.35 && p.x >= 0 && p.x <= video.videoWidth && p.y >= 0 && p.y <= video.videoHeight);
-    if (!points.length) continue;
-    const xs = points.map(p => p.x), ys = points.map(p => p.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs), maxY = Math.max(...ys);
-    const shoulderY = (tr.sm[11].y + tr.sm[12].y) / 2, hipY = (tr.sm[23].y + tr.sm[24].y) / 2;
-    const minY = Math.min(Math.min(...ys), shoulderY - Math.abs(hipY - shoulderY) * 0.7);
+    // 각 자리의 카메라 절반을 고정해서 관절 추적 오차가 화면 줌으로 이어지지 않게 한다.
     const ratio = card.canvas.width / card.canvas.height;
-    let h = Math.max((maxY - minY) * 1.25, 180), w = h * ratio;
-    if (w < (maxX - minX) * 1.25) { w = (maxX - minX) * 1.25; h = w / ratio; }
-    const fit = Math.min(1, video.videoWidth / w, video.videoHeight / h);
-    w *= fit; h *= fit;
-    const x = clamp((minX + maxX - w) / 2, 0, video.videoWidth - w);
-    const y = clamp((minY + maxY - h) / 2, 0, video.videoHeight - h);
+    const w = Math.min(video.videoWidth / 2, video.videoHeight * ratio), h = w / ratio;
+    const x = i * video.videoWidth / 2 + (video.videoWidth / 2 - w) / 2;
+    const y = (video.videoHeight - h) / 2;
     // 누끼가 비어도 관객이 카메라에 어떻게 잡히는지 확인할 수 있게 원본을 옅게 깐다.
     g.save(); g.globalAlpha = 0.55;
     g.translate(card.canvas.width, 0); g.scale(-1, 1);
@@ -702,11 +719,12 @@ function render(dt) {
       if (f.extra) { f.dead = true; continue; }
       Object.assign(f, newFlake(false));
     }
-    // 흰 바닥 위에서도 보이도록 옅은 푸른 그림자를 먼저 깐다
-    ctx.fillStyle = `rgba(90,118,165,${0.12 + f.z * 0.22})`;
-    ctx.beginPath(); ctx.arc(f.x + f.r * 0.35, f.y + f.r * 0.45, f.r * 1.15, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = `rgba(255,255,255,${0.75 + f.z * 0.25})`;
-    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
+    ctx.save();
+    ctx.translate(f.x, f.y);
+    ctx.rotate(f.ph + now * (0.08 + f.z * 0.12));
+    ctx.globalAlpha = 0.7 + f.z * 0.3;
+    ctx.drawImage(flakeSprite, -f.r, -f.r, f.r * 2, f.r * 2);
+    ctx.restore();
   }
   if (flakes.some(f => f.dead)) flakes = flakes.filter(f => !f.dead);
 
