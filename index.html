@@ -118,12 +118,58 @@ function chime() {
 
 /* ───────── 포즈 인식 ───────── */
 let landmarker = null, status = '카메라와 포즈 인식을 준비하고 있어요…';
+let cameras = [], camLabel = '', toast = '', toastT = 0;
+const CAM_KEY = 'snow-angel-camera';
+const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+                set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+
+async function openCamera(deviceId) {
+  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
+    audio: false,
+  });
+  video.srcObject = stream; await video.play();
+  const track = stream.getVideoTracks()[0];
+  camLabel = track.label || '카메라';
+  return track.getSettings().deviceId;
+}
+
+// 노트북 내장 카메라가 아니라 TV 위 외장 웹캠을 우선 사용
+async function chooseCamera() {
+  let current = await openCamera(store.get(CAM_KEY)).catch(() => openCamera());
+  cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  if (!store.get(CAM_KEY) && cameras.length > 1) {
+    const builtIn = /integrated|built-?in|facetime|내장|internal/i;
+    const external = cameras.find(d => d.label && !builtIn.test(d.label));
+    if (external && external.deviceId !== current) current = await openCamera(external.deviceId);
+  }
+  return current;
+}
+
+async function nextCamera() {
+  cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  if (cameras.length < 2) { showToast('연결된 카메라가 하나뿐이에요'); return; }
+  const cur = video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId;
+  const next = cameras[(cameras.findIndex(d => d.deviceId === cur) + 1) % cameras.length];
+  try { await openCamera(next.deviceId); store.set(CAM_KEY, next.deviceId); showToast(`카메라: ${camLabel}`); }
+  catch (e) { console.error(e); showToast('이 카메라를 열 수 없어요'); }
+}
+function showToast(s) { toast = s; toastT = 2.5; }
+
+// 전시 중 노트북/TV 화면이 꺼지지 않게
+let wakeLock = null;
+async function keepAwake() {
+  try { if (document.visibilityState === 'visible' && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } }
+  catch (e) { /* 지원 안 함 */ }
+}
+document.addEventListener('visibilitychange', keepAwake);
+
 async function init() {
+  keepAwake();
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false,
-    });
-    video.srcObject = stream; await video.play();
+    await chooseCamera();
+    showToast(`카메라: ${camLabel}`);
   } catch (e) {
     console.error(e); status = '카메라를 사용할 수 없어요. 연결과 권한을 확인해 주세요.'; return;
   }
@@ -399,6 +445,11 @@ function render(dt) {
 
   drawText();
   if (debug) drawDebug();
+  if (toastT > 0) {
+    toastT -= dt;
+    const u = Math.min(W / DPR / 1920, H / DPR / 1080);
+    text(toast, W / 2, H * 0.94, 22 * u, 500, clamp(toastT, 0, 1));
+  }
 }
 
 function text(str, x, y, size, weight = 500, alpha = 1, spacing = 0) {
@@ -442,6 +493,7 @@ addEventListener('keydown', e => {
   if (k === 'd') debug = !debug;
   if (k === 'f') (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
   if (k === 'r') go('idle');
+  if (k === 'c') nextCamera();
 });
 function drawDebug() {
   const w = 320 * DPR, h = video.videoHeight ? w * video.videoHeight / video.videoWidth : w * 9 / 16, x = W - w - 16 * DPR, y = H - h - 16 * DPR;
@@ -451,7 +503,7 @@ function drawDebug() {
     for (const n of Object.keys(NAMES)) { const p = tr.pts[n]; ctx.beginPath(); ctx.arc(p.x, p.y, 4 * DPR, 0, 7); ctx.fill(); }
   }
   ctx.font = `${13 * DPR}px monospace`; ctx.textAlign = 'left'; ctx.fillStyle = '#123';
-  const info = [`state ${state} ${st.toFixed(1)}s  fps ${fps.toFixed(0)}`,
+  const info = [`camera ${camLabel}`, `state ${state} ${st.toFixed(1)}s  fps ${fps.toFixed(0)}`,
     ...tracks.map((t, i) => `P${i + 1} ${present(t) ? 'on ' : 'off'} progress ${(trackProgress(t) * 100).toFixed(0)}%`)];
   info.forEach((s, i) => ctx.fillText(s, x, y - 10 * DPR - (info.length - 1 - i) * 16 * DPR));
 }
