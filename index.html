@@ -48,8 +48,8 @@ import { PoseLandmarker, FilesetResolver } from './vendor/tasks-vision/vision_bu
 
 /* ───────── 설정 ───────── */
 const CFG = {
-  drawMin: 12,      // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
-  drawMax: 30,      // 몸짓 단계 최대 길이(초)
+  drawMin: 10,      // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
+  drawMax: 20,      // 몸짓 단계 최대 길이(초)
   rise: 4.5,        // 비상 단계
   cover: 3.5,       // 덮임 단계
   enterHold: 0.6,   // 이 시간 이상 서 있으면 시작
@@ -372,7 +372,8 @@ const DEMO_MODE = new URLSearchParams(location.search).get('demo');
 const DEMO = DEMO_MODE !== null;
 function demoPose(t, cx) {
   const lm = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0 }));
-  const set = (i, x, y) => { lm[i] = { x: 1 - x, y, visibility: 0.99 }; }; // 앱이 좌우 반전하므로 미리 뒤집음
+  const jump = DEMO_MODE === 'jump' ? 0.1 * Math.pow(Math.max(0, Math.sin(t * 2.8)), 3) : 0;
+  const set = (i, x, y) => { lm[i] = { x: 1 - x, y: y - jump, visibility: 0.99 }; }; // 앱이 좌우 반전하므로 미리 뒤집음
   const k = 0.5 - 0.5 * Math.cos(t * 2.2), arm = (20 + k * 140) * Math.PI / 180, leg = (6 + k * 22) * Math.PI / 180;
   const hipY = 0.66, shY = 0.44, ar = 16 / 9;
   set(0, cx, 0.33); set(11, cx - 0.045, shY); set(12, cx + 0.045, shY); set(23, cx - 0.03, hipY); set(24, cx + 0.03, hipY);
@@ -402,7 +403,7 @@ async function init() {
     const files = await FilesetResolver.forVisionTasks('./vendor/tasks-vision/wasm');
     const make = delegate => PoseLandmarker.createFromOptions(files, {
       baseOptions: { modelAssetPath: './models/pose_landmarker_lite.task', delegate },
-      runningMode: 'VIDEO', numPoses: 4, outputSegmentationMasks: true,
+      runningMode: 'VIDEO', numPoses: 2, outputSegmentationMasks: true,
       minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
     });
     try { landmarker = await make('GPU'); } catch (e) { console.warn('GPU 실패, CPU로 전환', e); landmarker = await make('CPU'); }
@@ -418,6 +419,7 @@ const NAMES = { lSh: 11, rSh: 12, lEl: 13, rEl: 14, lWr: 15, rWr: 16, lHip: 23, 
 const tracks = [newTrack(), newTrack()];
 function newTrack() {
   return { sm: null, lastSeen: -99, firstSeen: 0, anchorX: null, size: 0, k: 0, ax: 0, ay: 0, s: 0, pts: null, head: null,
+    groundHipY: null, groundShY: null, jumpY: 0, jumpAt: 0,
     wMin: [999, 999], wMax: [-999, -999], legMax: 0, hasLegs: false, used: false, angelHead: null };
 }
 function resetProgress(tr) {
@@ -477,9 +479,10 @@ function ingest(list, masks = []) {
 function updateTrack(tr, lm, vw, vh) {
   const raw = lm.map(p => ({ x: (1 - p.x) * vw, y: p.y * vh, v: p.visibility ?? 1 }));
   const fresh = !present(tr) || !tr.sm;
-  if (fresh) { tr.sm = raw.map(p => ({ ...p })); tr.firstSeen = now; tr.lastTips = null; }
+  if (fresh) { tr.sm = raw.map(p => ({ ...p })); tr.firstSeen = now; tr.lastTips = null; tr.lastStampY = null; tr.lastSprayJumpY = 0; tr.groundHipY = null; tr.groundShY = null; tr.jumpY = 0; }
   else tr.sm.forEach((p, i) => { const r = raw[i]; p.x += (r.x - p.x) * 0.6; p.y += (r.y - p.y) * 0.6; p.v += (r.v - p.v) * 0.5; });
   tr.lastSeen = now;
+  tr.poseVersion = (tr.poseVersion || 0) + 1;
 
   const S = tr.sm;
   const hip = mid(S[23], S[24]), sh = mid(S[11], S[12]);
@@ -493,7 +496,22 @@ function updateTrack(tr, lm, vw, vh) {
   tr.k = fresh ? targetK : tr.k + (targetK - tr.k) * 0.25;
   tr.s = torso * tr.k;
   tr.ax = W * (tracks.indexOf(tr) === 0 ? 0.28 : 0.72);
-  tr.ay = H * 0.59;
+  if (tr.groundHipY === null) { tr.groundHipY = hip.y; tr.groundShY = sh.y; }
+  const rise = Math.min(tr.groundHipY - hip.y, tr.groundShY - sh.y);
+  if (rise < torso * 0.06) {
+    tr.groundHipY += (hip.y - tr.groundHipY) * 0.12;
+    tr.groundShY += (sh.y - tr.groundShY) * 0.12;
+    tr.jumpAt = 0;
+  } else {
+    if (!tr.jumpAt) tr.jumpAt = now;
+    if (now - tr.jumpAt > 1.2) {
+      tr.groundHipY += (hip.y - tr.groundHipY) * 0.06;
+      tr.groundShY += (sh.y - tr.groundShY) * 0.06;
+    }
+  }
+  const jumpTarget = clamp((rise - torso * 0.05) * tr.k * 1.2, 0, H * 0.13);
+  tr.jumpY += (jumpTarget - tr.jumpY) * 0.45;
+  tr.ay = H * 0.59 - tr.jumpY;
 
   if (lm.mask) { try { updateCutout(tr, lm.mask, vw, vh); } catch (e) { console.warn(e); tr.hasCut = false; } }
   else tr.hasCut = false;
@@ -625,8 +643,29 @@ function addSparkles(x, y, count, spread) {
   }
   if (sparkles.length > 110) sparkles.splice(0, sparkles.length - 110);
 }
+function addSnowSweep(x, y) {
+  for (let i = 0; i < 3; i++) {
+    sparkles.push({ x: x + (Math.random() - 0.5) * 24 * DPR, y,
+      vx: (Math.random() - 0.5) * 80 * DPR, vy: -(80 + Math.random() * 100) * DPR,
+      age: 0, life: 0.35 + Math.random() * 0.35, r: (1.5 + Math.random() * 2) * DPR, snow: true });
+  }
+  if (sparkles.length > 110) sparkles.splice(0, sparkles.length - 110);
+}
 function stamp(tr) {
-  bodyShape(dent.getContext('2d'), tr.pts, tr.s, '#ffffff'); // dent = 눌린 모양 마스크
+  const mask = dent.getContext('2d'), hipY = tr.pts.hipM.y;
+  if (tr.lastStampY !== null && tr.lastStampY - hipY > tr.s * 0.08) {
+    mask.save(); mask.translate(0, (tr.lastStampY - hipY) * IMP * 0.5);
+    bodyShape(mask, tr.pts, tr.s, '#ffffff'); mask.restore();
+  }
+  if (tr.jumpY < tr.s * 0.04) tr.lastSprayJumpY = 0;
+  if (tr.jumpY - (tr.lastSprayJumpY || 0) > tr.s * 0.06 && now - (tr.lastJumpSpray || 0) > 0.12) {
+    for (const n of ['lWr', 'rWr', 'lAn', 'rAn']) {
+      const p = tr.pts[n]; if (vis(p) > 0.5) addSnowSweep(p.x, p.y);
+    }
+    tr.lastSprayJumpY = tr.jumpY; tr.lastJumpSpray = now;
+  }
+  bodyShape(mask, tr.pts, tr.s, '#ffffff'); // dent = 눌린 모양 마스크
+  tr.lastStampY = hipY;
   tr.angelHead = { ...tr.pts.head };
   imprintDirty = true;
   const tips = ['lWr', 'rWr', 'lAn', 'rAn'];
@@ -725,7 +764,7 @@ function buildAngel() {
 let state = 'idle', st = 0, doneT = 0, absentT = 0, now = 0;
 function go(s) {
   state = s; st = 0;
-  if (s === 'draw') { tracks.forEach(tr => { resetProgress(tr); tr.lastTips = null; }); doneT = 0; absentT = 0; clearImprint(); }
+  if (s === 'draw') { tracks.forEach(tr => { resetProgress(tr); tr.lastTips = null; tr.lastStampY = null; tr.lastSprayJumpY = 0; tr.stampedVersion = 0; }); doneT = 0; absentT = 0; clearImprint(); }
   if (s === 'rise') {
     buildAngel(); chime();
     for (const tr of tracks) if (tr.angelHead) {
@@ -752,7 +791,7 @@ function updateState(dt) {
   if (state === 'idle') {
     if (st > CFG.idleCooldown && live.some(tr => now - tr.firstSeen > CFG.enterHold)) go('draw');
   } else if (state === 'draw') {
-    live.forEach(stamp);
+    live.forEach(tr => { if (tr.poseVersion !== tr.stampedVersion) { stamp(tr); tr.stampedVersion = tr.poseVersion; } });
     const p = sessionProgress();
     doneT = st >= CFG.drawMin && live.some(tr => trackProgress(tr) >= CFG.completeProgress) ? doneT + dt : 0;
     absentT = live.length ? 0 : absentT + dt;
@@ -828,8 +867,8 @@ function render(dt) {
     p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 34 * DPR * dt;
     const a = Math.max(0, 1 - p.age / p.life), r = p.r * (0.6 + a * 0.4);
     if (!a) continue;
-    ctx.strokeStyle = `rgba(177,119,57,${a * 0.8})`;
-    ctx.fillStyle = `rgba(255,226,160,${a * 0.9})`;
+    ctx.strokeStyle = p.snow ? `rgba(97,147,185,${a * 0.75})` : `rgba(177,119,57,${a * 0.8})`;
+    ctx.fillStyle = p.snow ? `rgba(222,245,255,${a * 0.9})` : `rgba(255,226,160,${a * 0.9})`;
     if (p.star) {
       ctx.lineWidth = DPR; ctx.beginPath();
       ctx.moveTo(p.x - r * 2, p.y); ctx.lineTo(p.x + r * 2, p.y);
@@ -945,7 +984,7 @@ function drawDebug() {
 /* ───────── 루프 ───────── */
 let last = performance.now(), lastVideoTime = -1;
 function frame(ts) {
-  const dt = Math.min(0.05, Math.max(0, (ts - last) / 1000)); last = ts; now += dt;
+  const dt = Math.min(1, Math.max(0, (ts - last) / 1000)); last = ts; now += dt;
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
   if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
@@ -959,7 +998,7 @@ function frame(ts) {
     status = '카메라 화면이 멈췄어요. 다시 연결 중…';
     scheduleCameraRetry();
   }
-  if (DEMO) ingest(DEMO_MODE === 'solo'
+  if (DEMO) ingest(DEMO_MODE === 'solo' || DEMO_MODE === 'jump'
     ? [demoPose(now, 0.33)] : [demoPose(now, 0.33), demoPose(now + 0.7, 0.67)]);
   updateState(dt);
   render(dt);
