@@ -471,12 +471,16 @@ function updateTrack(tr, lm, vw, vh) {
   const S = tr.sm;
   const hip = mid(S[23], S[24]), sh = mid(S[11], S[12]);
   const torso = Math.max(Math.hypot(sh.x - hip.x, sh.y - hip.y), vh * 0.08);
-  // 위치는 카메라와 맞추고 자국 크기는 화면 높이에 맞춰 일정하게 유지한다.
-  const sc = Math.max(W / vw, H / vh), ox = (W - vw * sc) / 2, oy = (H - vh * sc) / 2;
-  // 가까이 서거나 몸 일부가 화면 밖이어도 자국의 중심은 눈밭 안에 둔다.
-  tr.ax = clamp(ox + hip.x * sc, W * 0.25, W * 0.75);
-  tr.ay = clamp(oy + hip.y * sc, H * 0.45, H * 0.62);
-  tr.s = H * CFG.figure; tr.k = tr.s / torso;
+  // 몸통은 각자의 눈밭 중앙에 두고, 팔다리가 화면 밖으로 커지지 않게 크기를 제한한다.
+  const visible = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
+    .map(i => S[i]).filter(p => p.v > 0.35 && Number.isFinite(p.x) && Number.isFinite(p.y));
+  const maxDx = Math.max(1, ...visible.map(p => Math.abs(p.x - hip.x)));
+  const maxDy = Math.max(1, ...visible.map(p => Math.abs(p.y - hip.y)));
+  const targetK = Math.min(H * CFG.figure / torso, W * 0.16 / maxDx, H * 0.29 / maxDy);
+  tr.k = fresh ? targetK : tr.k + (targetK - tr.k) * 0.25;
+  tr.s = torso * tr.k;
+  tr.ax = W * (tracks.indexOf(tr) === 0 ? 0.28 : 0.72);
+  tr.ay = H * 0.59;
 
   if (lm.mask) { try { updateCutout(tr, lm.mask, vw, vh); } catch (e) { console.warn(e); tr.hasCut = false; } }
   else tr.hasCut = false;
@@ -668,6 +672,16 @@ function buildAngel() {
     g.strokeStyle = '#f8e6bf'; g.lineWidth = Math.max(2, s * 0.035);
     g.shadowColor = 'rgba(221,190,127,0.4)'; g.shadowBlur = 8 * IMP * DPR;
     g.beginPath(); g.ellipse(x, y, s * 0.31, s * 0.075, 0, 0, Math.PI * 2); g.stroke();
+    const faceY = tr.angelHead.y * IMP;
+    g.shadowBlur = 0; g.strokeStyle = 'rgba(72,103,132,0.72)';
+    g.lineWidth = Math.max(1.5, s * 0.014); g.lineCap = 'round';
+    for (const side of [-1, 1]) {
+      const eyeX = x + side * s * 0.105;
+      g.beginPath(); g.moveTo(eyeX - s * 0.04, faceY - s * 0.025);
+      g.quadraticCurveTo(eyeX, faceY + s * 0.008, eyeX + s * 0.04, faceY - s * 0.025); g.stroke();
+    }
+    g.beginPath(); g.moveTo(x - s * 0.075, faceY + s * 0.095);
+    g.quadraticCurveTo(x, faceY + s * 0.17, x + s * 0.075, faceY + s * 0.095); g.stroke();
   }
   angel = { sprite };
 }
