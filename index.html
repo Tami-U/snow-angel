@@ -849,8 +849,8 @@ function drawText() {
     text('왼쪽 또는 오른쪽 자리에 서서 팔을 크게 움직여 보세요', cx, H * 0.15, 27 * u, 500, 0.9 * a);
   } else if (state === 'draw') {
     const p = sessionProgress();
-    text(p < 0.5 ? '팔을 크게 저어 천사를 만들어 보세요' : '좋아요, 눈 위에 천사가 그려지고 있어요', cx, H * 0.07, 33 * u, 700);
-    text('한 명이 완성해도 함께 천사가 떠올라요', cx, H * 0.123, 23 * u, 500);
+    text(p < 0.5 ? '움직일 때마다 눈 위에 자국이 남아요' : '좋아요, 눈 위에 천사가 그려지고 있어요', cx, H * 0.07, 33 * u, 700);
+    text('팔과 다리를 휘저어 보세요', cx, H * 0.123, 23 * u, 500);
     const bw = W * 0.22, bh = 4 * DPR * u, by = H * 0.17;
     ctx.fillStyle = 'rgba(40,64,110,0.15)'; ctx.fillRect(cx - bw / 2, by, bw, bh);
     ctx.fillStyle = '#6c9dc2'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / CFG.completeProgress, 0, 1), bh);
