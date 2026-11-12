@@ -349,7 +349,8 @@ if (navigator.mediaDevices) navigator.mediaDevices.addEventListener?.('devicecha
 });
 
 // ?demo: 카메라 없이 가상의 두 사람이 팔다리를 젓는 화면으로 연출 확인
-const DEMO = new URLSearchParams(location.search).has('demo');
+const DEMO_MODE = new URLSearchParams(location.search).get('demo');
+const DEMO = DEMO_MODE !== null;
 function demoPose(t, cx) {
   const lm = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0 }));
   const set = (i, x, y) => { lm[i] = { x: 1 - x, y, visibility: 0.99 }; }; // 앱이 좌우 반전하므로 미리 뒤집음
@@ -445,7 +446,9 @@ function updateTrack(tr, lm, vw, vh) {
   const torso = Math.max(Math.hypot(sh.x - hip.x, sh.y - hip.y), vh * 0.08);
   // 위치는 카메라와 맞추고 자국 크기는 화면 높이에 맞춰 일정하게 유지한다.
   const sc = Math.max(W / vw, H / vh), ox = (W - vw * sc) / 2, oy = (H - vh * sc) / 2;
-  tr.ax = ox + hip.x * sc; tr.ay = oy + hip.y * sc;
+  // 가까이 서거나 몸 일부가 화면 밖이어도 자국의 중심은 눈밭 안에 둔다.
+  tr.ax = clamp(ox + hip.x * sc, W * 0.25, W * 0.75);
+  tr.ay = clamp(oy + hip.y * sc, H * 0.45, H * 0.62);
   tr.s = H * CFG.figure; tr.k = tr.s / torso;
 
   if (lm.mask) { try { updateCutout(tr, lm.mask, vw, vh); } catch (e) { console.warn(e); tr.hasCut = false; } }
@@ -673,8 +676,8 @@ function updateState(dt) {
     doneT = live.length && live.every(tr => trackProgress(tr) >= 0.9) ? doneT + dt : 0;
     absentT = live.length ? 0 : absentT + dt;
     if (doneT > CFG.doneHold) go('rise');
-    else if (st > CFG.drawMax) go(p > 0.25 ? 'rise' : 'cover');
-    else if (absentT > CFG.absentLimit) go(p > 0.35 ? 'rise' : 'cover');
+    else if (st > CFG.drawMax) go(tracks.some(tr => tr.angelHead) ? 'rise' : 'cover');
+    else if (absentT > CFG.absentLimit) go(tracks.some(tr => tr.angelHead) ? 'rise' : 'cover');
   } else if (state === 'rise') {
     if (st > CFG.rise) go('cover');
   } else if (state === 'cover') {
@@ -875,7 +878,8 @@ function frame(ts) {
     status = '카메라 화면이 멈췄어요. 다시 연결 중…';
     scheduleCameraRetry();
   }
-  if (DEMO) ingest([demoPose(now, 0.33), demoPose(now + 0.7, 0.67)]);
+  if (DEMO) ingest(DEMO_MODE === 'solo'
+    ? [demoPose(now, 0.33)] : [demoPose(now, 0.33), demoPose(now + 0.7, 0.67)]);
   updateState(dt);
   render(dt);
   requestAnimationFrame(frame);
