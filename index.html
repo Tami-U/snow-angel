@@ -11,14 +11,15 @@
   video { display: none; }
   #people-ui { position: fixed; inset: auto clamp(16px, 3vw, 52px) clamp(16px, 3vh, 40px); display: flex; justify-content: space-between; pointer-events: none; }
   /* 서리 낀 유리 카드 */
-  .person-card { width: clamp(150px, 15vw, 240px); padding: 10px; color: #1c3054; background: rgba(255, 255, 255, 0.42); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); border: 1px solid rgba(255, 255, 255, 0.75); border-radius: 18px; box-shadow: 0 18px 40px rgba(60, 86, 135, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.9); font: 500 clamp(12px, 1vw, 16px) / 1.4 "Pretendard", "Malgun Gothic", sans-serif; opacity: 0.7; transition: opacity 0.25s, border-color 0.25s, box-shadow 0.25s; }
+  .person-card { width: clamp(190px, 17vw, 300px); padding: 12px; color: #1c3054; background: rgba(255, 255, 255, 0.68); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); border: 1px solid rgba(255, 255, 255, 0.85); border-radius: 18px; box-shadow: 0 18px 40px rgba(60, 86, 135, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.9); font: 600 clamp(16px, 1.25vw, 22px) / 1.4 "Pretendard", "Malgun Gothic", sans-serif; opacity: 0.92; transition: opacity 0.25s, border-color 0.25s, box-shadow 0.25s; }
   .person-card[data-active="true"] { opacity: 1; border-color: rgba(240, 196, 112, 0.95); box-shadow: 0 18px 44px rgba(60, 86, 135, 0.22), 0 0 0 3px rgba(240, 196, 112, 0.28); }
   .person-head, .person-meta { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
   .person-head { margin: 2px 3px 8px; font-weight: 700; }
   .person-head span:last-child { color: #6d82a8; font-size: 0.78em; font-weight: 600; letter-spacing: 0.08em; }
   .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 11px; background: url('./assets/snow-angel-mark.png') center / min(190px, 90%) auto no-repeat, radial-gradient(120% 80% at 50% 100%, #ffffff, #dfe8f4 60%, #c8d6ea); box-shadow: inset 0 2px 8px rgba(70, 95, 140, 0.18); }
   .person-card[data-active="true"] .person-preview { background: #dfe8f4; }
-  .person-meta { margin: 9px 3px 7px; font-size: 0.82em; color: #3a5079; }
+  .person-meta { margin: 9px 3px 7px; font-size: 0.9em; color: #294064; }
+  .person-percent:empty { display: none; }
   .person-progress { height: 5px; overflow: hidden; border-radius: 5px; background: rgba(40, 64, 110, 0.12); }
   .person-progress span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #f3cf86, #e2a548); transition: width 0.2s; }
   @media (max-width: 800px) { .person-card { width: clamp(120px, 22vw, 170px); padding: 7px; } }
@@ -29,15 +30,15 @@
 <video id="v" playsinline muted></video>
 <div id="people-ui" aria-label="참가자 인식 미리보기">
   <aside class="person-card" id="person-left" data-active="false" aria-label="왼쪽 참가자">
-    <div class="person-head"><span>왼쪽 자리</span><span>01</span></div>
+    <div class="person-head"><span>← 왼쪽 자리</span><span>01</span></div>
     <canvas class="person-preview" width="240" height="300"></canvas>
-    <div class="person-meta"><span class="person-status">자리에 서 주세요</span><span class="person-percent">0%</span></div>
+    <div class="person-meta"><span class="person-status">자리에 서 주세요</span><span class="person-percent"></span></div>
     <div class="person-progress"><span></span></div>
   </aside>
   <aside class="person-card" id="person-right" data-active="false" aria-label="오른쪽 참가자">
-    <div class="person-head"><span>오른쪽 자리</span><span>02</span></div>
+    <div class="person-head"><span>오른쪽 자리 →</span><span>02</span></div>
     <canvas class="person-preview" width="240" height="300"></canvas>
-    <div class="person-meta"><span class="person-status">자리에 서 주세요</span><span class="person-percent">0%</span></div>
+    <div class="person-meta"><span class="person-status">자리에 서 주세요</span><span class="person-percent"></span></div>
     <div class="person-progress"><span></span></div>
   </aside>
 </div>
@@ -255,20 +256,53 @@ function chime() {
 /* ───────── 포즈 인식 ───────── */
 let landmarker = null, status = '카메라와 포즈 인식을 준비하고 있어요…';
 let cameras = [], camLabel = '', toast = '', toastT = 0;
+let cameraRetryTimer = null, cameraBusy = false, lastCameraFrameAt = performance.now();
 const CAM_KEY = 'snow-angel-camera';
 const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
                 set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
 async function openCamera(deviceId) {
-  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  const previous = video.srcObject;
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
     audio: false,
   });
-  video.srcObject = stream; await video.play();
+  try { video.srcObject = stream; await video.play(); }
+  catch (e) {
+    stream.getTracks().forEach(t => t.stop());
+    video.srcObject = previous;
+    if (previous) video.play().catch(() => {});
+    throw e;
+  }
   const track = stream.getVideoTracks()[0];
+  track.addEventListener('ended', () => {
+    if (video.srcObject !== stream) return;
+    status = '카메라 연결이 끊겼어요. 다시 연결 중…';
+    scheduleCameraRetry();
+  });
+  if (previous) previous.getTracks().forEach(t => t.stop());
+  if (cameraRetryTimer) { clearTimeout(cameraRetryTimer); cameraRetryTimer = null; }
+  lastVideoTime = -1; lastCameraFrameAt = performance.now();
   camLabel = track.label || '카메라';
   return track.getSettings().deviceId;
+}
+
+function scheduleCameraRetry(delay = 3000) {
+  if (DEMO || cameraRetryTimer) return;
+  cameraRetryTimer = setTimeout(async () => {
+    cameraRetryTimer = null;
+    if (cameraBusy) { scheduleCameraRetry(); return; }
+    cameraBusy = true;
+    try {
+      await chooseCamera();
+      if (landmarker) status = '';
+      showToast(`카메라 다시 연결됨: ${camLabel}`);
+    } catch (e) {
+      console.warn('카메라 재연결 실패', e);
+      status = '카메라를 연결해 주세요. 자동으로 다시 시도합니다.';
+      scheduleCameraRetry();
+    } finally { cameraBusy = false; }
+  }, delay);
 }
 
 // 노트북 내장 카메라가 아니라 TV 위 외장 웹캠을 우선 사용
@@ -278,18 +312,24 @@ async function chooseCamera() {
   if (!store.get(CAM_KEY) && cameras.length > 1) {
     const builtIn = /integrated|built-?in|facetime|내장|internal/i;
     const external = cameras.find(d => d.label && !builtIn.test(d.label));
-    if (external && external.deviceId !== current) current = await openCamera(external.deviceId);
+    if (external && external.deviceId !== current) {
+      try { current = await openCamera(external.deviceId); }
+      catch (e) { console.warn('외장 카메라를 열 수 없어 현재 카메라를 사용합니다', e); }
+    }
   }
   return current;
 }
 
 async function nextCamera() {
+  if (cameraBusy) return;
   cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
   if (cameras.length < 2) { showToast('연결된 카메라가 하나뿐이에요'); return; }
   const cur = video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId;
   const next = cameras[(cameras.findIndex(d => d.deviceId === cur) + 1) % cameras.length];
-  try { await openCamera(next.deviceId); store.set(CAM_KEY, next.deviceId); showToast(`카메라: ${camLabel}`); }
+  cameraBusy = true;
+  try { await openCamera(next.deviceId); store.set(CAM_KEY, next.deviceId); showToast(`카메라: ${camLabel}`); status = ''; }
   catch (e) { console.error(e); showToast('이 카메라를 열 수 없어요'); }
+  finally { cameraBusy = false; }
 }
 function showToast(s) { toast = s; toastT = 2.5; }
 
@@ -300,6 +340,9 @@ async function keepAwake() {
   catch (e) { /* 지원 안 함 */ }
 }
 document.addEventListener('visibilitychange', keepAwake);
+if (navigator.mediaDevices) navigator.mediaDevices.addEventListener?.('devicechange', () => {
+  if (video.srcObject?.getVideoTracks()[0]?.readyState !== 'live') scheduleCameraRetry(500);
+});
 
 // ?demo: 카메라 없이 가상의 두 사람이 팔다리를 젓는 화면으로 연출 확인
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -328,7 +371,7 @@ async function init() {
     await chooseCamera();
     showToast(`카메라: ${camLabel}`);
   } catch (e) {
-    console.error(e); status = '카메라를 사용할 수 없어요. 연결과 권한을 확인해 주세요.'; return;
+    console.error(e); status = '카메라를 연결해 주세요. 자동으로 다시 시도합니다.'; scheduleCameraRetry();
   }
   try {
     const files = await FilesetResolver.forVisionTasks('./vendor/tasks-vision/wasm');
@@ -338,7 +381,7 @@ async function init() {
       minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
     });
     try { landmarker = await make('GPU'); } catch (e) { console.warn('GPU 실패, CPU로 전환', e); landmarker = await make('CPU'); }
-    status = '';
+    if (video.srcObject?.getVideoTracks()[0]?.readyState === 'live') status = '';
   } catch (e) {
     console.error(e); status = '포즈 인식 모델을 불러오지 못했어요.';
   }
@@ -394,11 +437,11 @@ function updateTrack(tr, lm, vw, vh) {
 
   const S = tr.sm;
   const hip = mid(S[23], S[24]), sh = mid(S[11], S[12]);
-  const torso = Math.max(Math.hypot(sh.x - hip.x, sh.y - hip.y), 1);
-  // 거울처럼: 카메라에 보이는 위치·크기 그대로 화면에 (cover 맞춤)
+  const torso = Math.max(Math.hypot(sh.x - hip.x, sh.y - hip.y), vh * 0.08);
+  // 위치는 카메라와 맞추고 자국 크기는 화면 높이에 맞춰 일정하게 유지한다.
   const sc = Math.max(W / vw, H / vh), ox = (W - vw * sc) / 2, oy = (H - vh * sc) / 2;
-  tr.k = sc; tr.ax = ox + hip.x * sc; tr.ay = oy + hip.y * sc;
-  tr.s = torso * tr.k;
+  tr.ax = ox + hip.x * sc; tr.ay = oy + hip.y * sc;
+  tr.s = H * CFG.figure; tr.k = tr.s / torso;
 
   if (lm.mask) { try { updateCutout(tr, lm.mask, vw, vh); } catch (e) { console.warn(e); tr.hasCut = false; } }
   else tr.hasCut = false;
@@ -457,10 +500,11 @@ function drawPersonCards() {
     const tr = tracks[i], card = personCards[i], g = card.ctx;
     const active = present(tr) && tr.sm && video.videoWidth && video.videoHeight;
     card.el.dataset.active = String(!!active);
-    const progress = active && state === 'draw' ? Math.round(trackProgress(tr) * 100) : 0;
-    card.status.textContent = !active ? '자리에 서 주세요' : state === 'draw' ? '천사 만드는 중' : state === 'rise' ? '천사 완성!' : '사람 인식됨';
-    card.percent.textContent = `${progress}%`;
-    card.bar.style.width = `${progress}%`;
+    const progress = state === 'rise' ? 100 : Math.round(trackProgress(tr) * 100);
+    const showingProgress = active && (state === 'draw' || state === 'rise');
+    card.status.textContent = !active ? '자리에 서 주세요' : state === 'draw' ? progress >= 90 ? '완료 · 함께 기다려요' : '천사 만드는 중' : state === 'rise' ? '천사 완성!' : '사람 인식됨';
+    card.percent.textContent = showingProgress ? `${progress}%` : '';
+    card.bar.style.width = showingProgress ? `${progress}%` : '0%';
     g.clearRect(0, 0, card.canvas.width, card.canvas.height);
     if (!active) continue;
 
@@ -606,7 +650,10 @@ function go(s) {
   if (s === 'idle') { clearImprint(); angel = null; sparks = []; }
   setAudioLevels();
 }
-function sessionProgress() { return Math.max(...tracks.map(trackProgress)); }
+function sessionProgress() {
+  const participants = tracks.filter(tr => present(tr) && tr.used);
+  return participants.length ? participants.reduce((sum, tr) => sum + trackProgress(tr), 0) / participants.length : 0;
+}
 
 function updateState(dt) {
   st += dt;
@@ -616,7 +663,7 @@ function updateState(dt) {
   } else if (state === 'draw') {
     live.forEach(stamp);
     const p = sessionProgress();
-    doneT = p >= 0.9 ? doneT + dt : 0;
+    doneT = live.length && live.every(tr => trackProgress(tr) >= 0.9) ? doneT + dt : 0;
     absentT = live.length ? 0 : absentT + dt;
     if (doneT > CFG.doneHold) go('rise');
     else if (st > CFG.drawMax) go(p > 0.25 ? 'rise' : 'cover');
@@ -753,16 +800,25 @@ function drawText() {
   const u = Math.min(W / DPR / 1920, H / DPR / 1080) * 1.0;
   const cx = W / 2;
   if (status) { text(status, cx, H / 2, 34 * u, 500); return; }
+  if (state === 'idle' || state === 'draw') {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.76)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 2 * DPR;
+    ctx.beginPath(); ctx.roundRect(W * 0.14, H * 0.012, W * 0.72, H * 0.16, 20 * DPR);
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
   if (state === 'idle') {
     const a = clamp(st / 1.2, 0, 1);
-    // 얼굴을 가리지 않게 맨 위 띠에만
     text('CHRISTMAS SEASON · SNOW ANGEL', cx, H * 0.035, 16 * u, 600, 0.85 * a, 5 * u);
     text('스노우 엔젤', cx, H * 0.085, 56 * u, 700, a);
-    text('표시된 자리에 서서 팔과 다리를 크게 저어 보세요 · 두 명이 함께해도 좋아요', cx, H * 0.135, 24 * u, 500, 0.95 * a);
+    text('TV 앞 왼쪽·오른쪽 표시 위에 서서 팔다리를 저어 보세요', cx, H * 0.135, 28 * u, 600, 0.95 * a);
   } else if (state === 'draw') {
     const p = sessionProgress();
-    text(p < 0.5 ? '팔을 위아래로 크게 휘저어 날개를 만들어요' : '다리도 벌렸다 모으며 치마를 그려요', cx, H * 0.05, 28 * u, 600);
-    const bw = W * 0.22, bh = 6 * DPR * u, by = H * 0.085;
+    text(p < 0.5 ? '팔을 위아래로 크게 저어 날개를 만들어요' : '다리도 벌렸다 모으며 천사를 완성해요', cx, H * 0.06, 32 * u, 700);
+    text('두 명이면 각자 움직여야 함께 완성돼요', cx, H * 0.112, 23 * u, 600);
+    const bw = W * 0.22, bh = 7 * DPR * u, by = H * 0.15;
     ctx.fillStyle = 'rgba(40,64,110,0.15)'; ctx.fillRect(cx - bw / 2, by, bw, bh);
     ctx.fillStyle = 'rgba(226,170,72,0.95)'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / 0.9, 0, 1), bh);
   } else if (state === 'rise') {
@@ -802,9 +858,15 @@ function frame(ts) {
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
   if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
+    lastCameraFrameAt = ts;
     // 콜백 안에서 처리해야 마스크 데이터가 유효함
     try { landmarker.detectForVideo(video, ts, res => ingest(res.landmarks || [], res.segmentationMasks || [])); }
     catch (e) { console.error(e); }
+  }
+  if (!DEMO && landmarker && video.srcObject && ts - lastCameraFrameAt > 4000) {
+    lastCameraFrameAt = ts;
+    status = '카메라 화면이 멈췄어요. 다시 연결 중…';
+    scheduleCameraRetry();
   }
   if (DEMO) ingest([demoPose(now, 0.33), demoPose(now + 0.7, 0.67)]);
   updateState(dt);
