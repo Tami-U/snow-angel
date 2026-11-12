@@ -669,9 +669,9 @@ function buildAngel() {
   for (const tr of tracks) {
     if (!tr.angelHead) continue;
     const s = tr.s * IMP, x = tr.angelHead.x * IMP, y = tr.angelHead.y * IMP - s * 0.55;
-    g.strokeStyle = '#f8e6bf'; g.lineWidth = Math.max(2, s * 0.035);
-    g.shadowColor = 'rgba(221,190,127,0.4)'; g.shadowBlur = 8 * IMP * DPR;
-    g.beginPath(); g.ellipse(x, y, s * 0.31, s * 0.075, 0, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = '#c99b58'; g.lineWidth = Math.max(3, s * 0.05);
+    g.shadowColor = 'rgba(255,224,166,0.85)'; g.shadowBlur = 12 * IMP * DPR;
+    g.beginPath(); g.ellipse(x, y, s * 0.38, s * 0.1, 0, 0, Math.PI * 2); g.stroke();
     const faceY = tr.angelHead.y * IMP;
     g.shadowBlur = 0; g.strokeStyle = 'rgba(72,103,132,0.72)';
     g.lineWidth = Math.max(1.5, s * 0.014); g.lineCap = 'round';
@@ -701,7 +701,7 @@ function go(s) {
 }
 function sessionProgress() {
   const participants = tracks.filter(tr => present(tr) && tr.used);
-  return participants.length ? participants.reduce((sum, tr) => sum + trackProgress(tr), 0) / participants.length : 0;
+  return participants.length ? Math.max(...participants.map(trackProgress)) : 0;
 }
 
 function updateState(dt) {
@@ -712,7 +712,7 @@ function updateState(dt) {
   } else if (state === 'draw') {
     live.forEach(stamp);
     const p = sessionProgress();
-    doneT = st >= CFG.drawMin && live.length && live.every(tr => trackProgress(tr) >= CFG.completeProgress) ? doneT + dt : 0;
+    doneT = st >= CFG.drawMin && live.some(tr => trackProgress(tr) >= CFG.completeProgress) ? doneT + dt : 0;
     absentT = live.length ? 0 : absentT + dt;
     if (doneT > CFG.doneHold) go('rise');
     else if (st > CFG.drawMax) go(tracks.some(tr => tr.angelHead) ? 'rise' : 'cover');
@@ -850,7 +850,7 @@ function drawText() {
   } else if (state === 'draw') {
     const p = sessionProgress();
     text(p < 0.5 ? '팔을 크게 저어 천사를 만들어 보세요' : '좋아요, 눈 위에 천사가 그려지고 있어요', cx, H * 0.07, 33 * u, 700);
-    text('두 명이면 각자 움직여야 함께 완성돼요', cx, H * 0.123, 23 * u, 500);
+    text('한 명이 완성해도 함께 천사가 떠올라요', cx, H * 0.123, 23 * u, 500);
     const bw = W * 0.22, bh = 4 * DPR * u, by = H * 0.17;
     ctx.fillStyle = 'rgba(40,64,110,0.15)'; ctx.fillRect(cx - bw / 2, by, bw, bh);
     ctx.fillStyle = '#6c9dc2'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / CFG.completeProgress, 0, 1), bh);
