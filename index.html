@@ -177,7 +177,7 @@ async function init() {
     const files = await FilesetResolver.forVisionTasks('./vendor/tasks-vision/wasm');
     const make = delegate => PoseLandmarker.createFromOptions(files, {
       baseOptions: { modelAssetPath: './models/pose_landmarker_lite.task', delegate },
-      runningMode: 'VIDEO', numPoses: 2,
+      runningMode: 'VIDEO', numPoses: 2, outputSegmentationMasks: true,
       minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
     });
     try { landmarker = await make('GPU'); } catch (e) { console.warn('GPU 실패, CPU로 전환', e); landmarker = await make('CPU'); }
@@ -209,9 +209,10 @@ function angleBetween(ax, ay, bx, by) {
   return Math.acos(clamp((ax * bx + ay * by) / (la * lb), -1, 1)) * 180 / Math.PI;
 }
 
-function ingest(list) {
+function ingest(list, masks = []) {
   const vw = video.videoWidth, vh = video.videoHeight;
   const items = list
+    .map((lm, i) => Object.assign(lm, { mask: masks[i] }))
     // 어깨만 보여도 인식(가까이 서거나 골반이 화면 밖이어도 MediaPipe가 골반 위치를 추정해 줌)
     .filter(lm => [11, 12].every(i => vis({ v: lm[i].visibility }) > 0.5))
     .map(lm => ({ lm, hx: 1 - (lm[23].x + lm[24].x) / 2 }))
@@ -244,6 +245,10 @@ function updateTrack(tr, lm, vw, vh) {
   tr.k += (kT - tr.k) * a; tr.ax += (axT - tr.ax) * a; tr.ay = H * 0.6;
   tr.s = torso * tr.k;
 
+  tr.hipV = hip;
+  if (lm.mask) { try { updateCutout(tr, lm.mask, vw, vh); } catch (e) { console.warn(e); tr.hasCut = false; } }
+  else tr.hasCut = false;
+
   const P = {};
   for (const [n, i] of Object.entries(NAMES)) P[n] = { x: tr.ax + (S[i].x - hip.x) * tr.k, y: tr.ay + (S[i].y - hip.y) * tr.k, v: S[i].v };
   P.shM = mid(P.lSh, P.rSh); P.hipM = mid(P.lHip, P.rHip);
@@ -265,6 +270,53 @@ function updateTrack(tr, lm, vw, vh) {
     tr.legMax = Math.max(tr.legMax, angleBetween(S[la].x - S[23].x, S[la].y - S[23].y, S[ra].x - S[24].x, S[ra].y - S[24].y));
   }
   tr.used = true;
+}
+
+/* ───────── 사람 누끼: 배경을 지우고 사람만 눈밭 위에 ───────── */
+const CUT = 0.5; // 누끼 해상도(카메라 대비)
+function updateCutout(tr, mask, vw, vh) {
+  const cw = Math.round(vw * CUT), ch = Math.round(vh * CUT);
+  if (!tr.cut || tr.cut.width !== cw || tr.cut.height !== ch) {
+    tr.cut = mk(cw, ch); tr.mcv = mk(cw, ch);
+    tr.mimg = tr.mcv.getContext('2d').createImageData(cw, ch);
+    tr.mimg.data.fill(255);
+  }
+  const mw = mask.width, mh = mask.height, f = mask.getAsFloat32Array(), d = tr.mimg.data;
+  for (let y = 0; y < ch; y++) {
+    const row = ((y / ch * mh) | 0) * mw;
+    for (let x = 0; x < cw; x++) {
+      const v = f[row + (mw - 1 - ((x / cw * mw) | 0))]; // 좌우 반전(거울)
+      d[(y * cw + x) * 4 + 3] = v < 0.3 ? 0 : v > 0.7 ? 255 : (v - 0.3) * 637.5;
+    }
+  }
+  tr.mcv.getContext('2d').putImageData(tr.mimg, 0, 0);
+  const c = tr.cut.getContext('2d');
+  c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, cw, ch);
+  c.save(); c.translate(cw, 0); c.scale(-1, 1); c.drawImage(video, 0, 0, cw, ch); c.restore();
+  c.globalCompositeOperation = 'destination-in'; c.drawImage(tr.mcv, 0, 0);
+  c.globalCompositeOperation = 'source-over';
+  tr.hasCut = true;
+}
+
+function drawPeople() {
+  for (const tr of tracks) {
+    if (!present(tr) || !tr.hasCut || !tr.pts) continue;
+    const fade = clamp((now - tr.firstSeen) / 0.5, 0, 1) * clamp(1 - (now - tr.lastSeen) / 0.4, 0, 1);
+    const k = tr.k / CUT;
+    const x = tr.ax - tr.hipV.x * tr.k, y = tr.ay - tr.hipV.y * tr.k;
+    // 발밑 그림자: 눈바닥 위에 서 있는 느낌
+    const P = tr.pts, footY = Math.max(vis(P.lAn) > 0.4 ? P.lAn.y : 0, vis(P.rAn) > 0.4 ? P.rAn.y : 0, tr.ay + tr.s * 1.5);
+    ctx.save(); ctx.globalAlpha = fade;
+    ctx.translate(tr.ax, footY); ctx.scale(1, 0.16);
+    const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, tr.s * 0.9);
+    sg.addColorStop(0, 'rgba(60,85,130,0.35)'); sg.addColorStop(1, 'rgba(60,85,130,0)');
+    ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(0, 0, tr.s * 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha = fade;
+    ctx.shadowColor = 'rgba(255,255,255,0.85)'; ctx.shadowBlur = 16 * DPR;
+    ctx.drawImage(tr.cut, x, y, tr.cut.width * k, tr.cut.height * k);
+    ctx.restore();
+  }
 }
 
 function trackProgress(tr) {
@@ -304,7 +356,7 @@ function stamp(tr) {
 // 지금 서 있는 사람의 모습(빛나는 실루엣) — 첫 화면부터 자기 몸을 바로 볼 수 있게
 const ghost = mk(1, 1);
 function drawGhosts() {
-  const live = tracks.filter(tr => present(tr) && tr.pts);
+  const live = tracks.filter(tr => present(tr) && tr.pts && !tr.hasCut); // 누끼가 없을 때만 대체 실루엣
   if (!live.length) return;
   if (ghost.width !== dent.width || ghost.height !== dent.height) { ghost.width = dent.width; ghost.height = dent.height; }
   const g = ghost.getContext('2d');
@@ -411,6 +463,10 @@ function render(dt) {
     ctx.globalAlpha = 1;
   }
 
+  // 사람(배경 제거) — 첫 화면부터 항상
+  drawPeople();
+  drawGhosts();
+
   // 비상
   if (state === 'rise' && angel) {
     const p = clamp(st / CFG.rise, 0, 1), e = ease(p);
@@ -438,7 +494,6 @@ function render(dt) {
 
   // 손·발 빛 (몸짓이 잘 잡히고 있다는 피드백)
   if (state === 'idle' || state === 'draw') {
-    drawGhosts();
     const gs = glowSprite();
     for (const tr of tracks) {
       if (!present(tr) || !tr.pts) continue;
@@ -535,7 +590,9 @@ function frame(ts) {
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
   if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
-    try { ingest(landmarker.detectForVideo(video, ts).landmarks || []); } catch (e) { console.error(e); }
+    // 콜백 안에서 처리해야 마스크 데이터가 유효함
+    try { landmarker.detectForVideo(video, ts, res => ingest(res.landmarks || [], res.segmentationMasks || [])); }
+    catch (e) { console.error(e); }
   }
   updateState(dt);
   render(dt);
