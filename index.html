@@ -369,6 +369,11 @@ function drawPersonCards() {
     w *= fit; h *= fit;
     const x = clamp((minX + maxX - w) / 2, 0, video.videoWidth - w);
     const y = clamp((minY + maxY - h) / 2, 0, video.videoHeight - h);
+    // 누끼가 비어도 관객이 카메라에 어떻게 잡히는지 확인할 수 있게 원본을 옅게 깐다.
+    g.save(); g.globalAlpha = 0.55;
+    g.translate(card.canvas.width, 0); g.scale(-1, 1);
+    g.drawImage(video, video.videoWidth - x - w, y, w, h, 0, 0, card.canvas.width, card.canvas.height);
+    g.restore();
     if (tr.hasCut) {
       g.drawImage(tr.cut, x * CUT, y * CUT, w * CUT, h * CUT, 0, 0, card.canvas.width, card.canvas.height);
     } else {
