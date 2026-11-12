@@ -260,6 +260,10 @@ let cameraRetryTimer = null, cameraBusy = false, lastCameraFrameAt = performance
 const CAM_KEY = 'snow-angel-camera';
 const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
                 set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+const cameraPermissionDenied = e => e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError';
+const cameraErrorMessage = e => cameraPermissionDenied(e)
+  ? '크롬 주소창에서 카메라 권한을 허용한 뒤 새로고침해 주세요.'
+  : '카메라를 연결해 주세요. 자동으로 다시 시도합니다.';
 
 async function openCamera(deviceId) {
   const previous = video.srcObject;
@@ -299,8 +303,8 @@ function scheduleCameraRetry(delay = 3000) {
       showToast(`카메라 다시 연결됨: ${camLabel}`);
     } catch (e) {
       console.warn('카메라 재연결 실패', e);
-      status = '카메라를 연결해 주세요. 자동으로 다시 시도합니다.';
-      scheduleCameraRetry();
+      status = cameraErrorMessage(e);
+      if (!cameraPermissionDenied(e)) scheduleCameraRetry();
     } finally { cameraBusy = false; }
   }, delay);
 }
@@ -371,7 +375,8 @@ async function init() {
     await chooseCamera();
     showToast(`카메라: ${camLabel}`);
   } catch (e) {
-    console.error(e); status = '카메라를 연결해 주세요. 자동으로 다시 시도합니다.'; scheduleCameraRetry();
+    console.error(e); status = cameraErrorMessage(e);
+    if (!cameraPermissionDenied(e)) scheduleCameraRetry();
   }
   try {
     const files = await FilesetResolver.forVisionTasks('./vendor/tasks-vision/wasm');
@@ -498,26 +503,28 @@ function updateCutout(tr, mask, vw, vh) {
 function drawPersonCards() {
   for (let i = 0; i < tracks.length; i++) {
     const tr = tracks[i], card = personCards[i], g = card.ctx;
-    const active = present(tr) && tr.sm && video.videoWidth && video.videoHeight;
+    const hasVideo = video.readyState >= 2 && video.videoWidth && video.videoHeight && video.srcObject?.getVideoTracks()[0]?.readyState === 'live';
+    const active = hasVideo && present(tr) && tr.sm;
     card.el.dataset.active = String(!!active);
     const progress = state === 'rise' ? 100 : Math.round(trackProgress(tr) * 100);
     const showingProgress = active && (state === 'draw' || state === 'rise');
-    card.status.textContent = !active ? '자리에 서 주세요' : state === 'draw' ? progress >= 90 ? '완료 · 함께 기다려요' : '천사 만드는 중' : state === 'rise' ? '천사 완성!' : '사람 인식됨';
+    card.status.textContent = !hasVideo ? '카메라 연결 중' : !active ? '자리에 서 주세요' : state === 'draw' ? progress >= 90 ? '완료 · 함께 기다려요' : '천사 만드는 중' : state === 'rise' ? '천사 완성!' : '사람 인식됨';
     card.percent.textContent = showingProgress ? `${progress}%` : '';
     card.bar.style.width = showingProgress ? `${progress}%` : '0%';
     g.clearRect(0, 0, card.canvas.width, card.canvas.height);
-    if (!active) continue;
+    if (!hasVideo) continue;
 
     // 각 자리의 카메라 절반을 고정해서 관절 추적 오차가 화면 줌으로 이어지지 않게 한다.
     const ratio = card.canvas.width / card.canvas.height;
     const w = Math.min(video.videoWidth / 2, video.videoHeight * ratio), h = w / ratio;
     const x = i * video.videoWidth / 2 + (video.videoWidth / 2 - w) / 2;
     const y = (video.videoHeight - h) / 2;
-    // 누끼가 비어도 관객이 카메라에 어떻게 잡히는지 확인할 수 있게 원본을 옅게 깐다.
-    g.save(); g.globalAlpha = 0.55;
+    // 인식 전에도 카메라 화면을 보여줘 관객이 서야 할 위치를 확인할 수 있게 한다.
+    g.save(); g.globalAlpha = active ? 0.55 : 0.9;
     g.translate(card.canvas.width, 0); g.scale(-1, 1);
     g.drawImage(video, video.videoWidth - x - w, y, w, h, 0, 0, card.canvas.width, card.canvas.height);
     g.restore();
+    if (!active) continue;
     if (tr.hasCut) {
       g.drawImage(tr.cut, x * CUT, y * CUT, w * CUT, h * CUT, 0, 0, card.canvas.width, card.canvas.height);
     } else {
