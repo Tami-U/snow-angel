@@ -555,7 +555,7 @@ function drawPersonCards() {
     card.el.dataset.active = String(!!active);
     const progress = Math.round(clamp(trackProgress(tr) / CFG.completeProgress, 0, 1) * 100);
     const showingProgress = active && state === 'draw';
-    card.status.textContent = !hasVideo ? '카메라 연결 중' : !active ? '자리에 서 주세요' : state === 'draw' ? progress >= 100 ? '완료 · 함께 기다려요' : '천사 만드는 중' : state === 'rise' ? '천사 완성!' : '사람 인식됨';
+    card.status.textContent = !hasVideo ? '카메라 연결 중' : !active ? '자리에 서 주세요' : state === 'draw' ? progress >= 100 ? '천사 거의 완성!' : '천사 만드는 중' : state === 'rise' ? '천사 완성!' : '사람 인식됨';
     card.percent.textContent = showingProgress ? `${progress}%` : '';
     card.bar.style.width = showingProgress ? `${progress}%` : '0%';
     g.clearRect(0, 0, card.canvas.width, card.canvas.height);
