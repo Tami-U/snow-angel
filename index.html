@@ -263,6 +263,8 @@ const store = { get: k => { try { return localStorage.getItem(k); } catch { retu
 const cameraPermissionDenied = e => e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError';
 const cameraErrorMessage = e => cameraPermissionDenied(e)
   ? '크롬 주소창에서 카메라 권한을 허용한 뒤 새로고침해 주세요.'
+  : e?.name === 'NotReadableError'
+    ? '다른 탭이나 앱이 카메라를 사용 중이에요. 닫으면 자동 연결됩니다.'
   : '카메라를 연결해 주세요. 자동으로 다시 시도합니다.';
 
 async function openCamera(deviceId) {
