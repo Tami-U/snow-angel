@@ -659,21 +659,21 @@ function buildAngel() {
   t.drawImage(dent, 0, 0);
   t.globalCompositeOperation = 'source-in';
   const tg = t.createLinearGradient(0, 0, 0, h);
-  tg.addColorStop(0, '#ffffff'); tg.addColorStop(0.55, '#e8f3fb'); tg.addColorStop(1, '#bfd5e8');
+  tg.addColorStop(0, '#ffe5ac'); tg.addColorStop(0.55, '#f6ca76'); tg.addColorStop(1, '#dfa353');
   t.fillStyle = tg; t.fillRect(0, 0, w, h);
   const sprite = mk(w, h), g = sprite.getContext('2d');
-  g.shadowColor = 'rgba(112,155,193,0.22)';
-  g.globalAlpha = 0.4; g.shadowBlur = 9 * IMP * DPR; g.drawImage(tint, 0, 0);
+  g.shadowColor = 'rgba(159,103,43,0.42)';
+  g.globalAlpha = 0.55; g.shadowBlur = 12 * IMP * DPR; g.drawImage(tint, 0, 0);
   g.shadowBlur = 0; g.globalAlpha = 0.95; g.drawImage(tint, 0, 0);
   g.globalAlpha = 1;
   for (const tr of tracks) {
     if (!tr.angelHead) continue;
     const s = tr.s * IMP, x = tr.angelHead.x * IMP, y = tr.angelHead.y * IMP - s * 0.55;
-    g.strokeStyle = '#c99b58'; g.lineWidth = Math.max(3, s * 0.05);
+    g.strokeStyle = '#a96b2e'; g.lineWidth = Math.max(3, s * 0.05);
     g.shadowColor = 'rgba(255,224,166,0.85)'; g.shadowBlur = 12 * IMP * DPR;
     g.beginPath(); g.ellipse(x, y, s * 0.38, s * 0.1, 0, 0, Math.PI * 2); g.stroke();
     const faceY = tr.angelHead.y * IMP;
-    g.shadowBlur = 0; g.strokeStyle = 'rgba(72,103,132,0.72)';
+    g.shadowBlur = 0; g.strokeStyle = 'rgba(104,67,39,0.8)';
     g.lineWidth = Math.max(1.5, s * 0.014); g.lineCap = 'round';
     for (const side of [-1, 1]) {
       const eyeX = x + side * s * 0.105;
@@ -775,7 +775,7 @@ function render(dt) {
     const p = clamp(st / CFG.rise, 0, 1), e = ease(p);
     const dy = -e * H * 0.16, sc = 1 + e * 0.015;
     const a = p < 0.18 ? p / 0.18 : p > 0.7 ? (1 - p) / 0.3 : 1;
-    ctx.save(); ctx.globalAlpha = 0.78 * a;
+    ctx.save(); ctx.globalAlpha = 0.92 * a;
     ctx.translate(W / 2, H / 2 + dy); ctx.scale(sc, sc); ctx.translate(-W / 2, -H / 2);
     ctx.drawImage(angel.sprite, 0, 0, W, H);
     ctx.restore();
