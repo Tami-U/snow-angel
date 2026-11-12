@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>스노우 엔젤</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #b9c9e0; }
+  body { cursor: none; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  video { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<video id="v" playsinline muted></video>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from './vendor/tasks-vision/vision_bundle.mjs';
+
+/* ───────── 설정 ───────── */
+const CFG = {
+  drawMax: 22,      // 몸짓 단계 최대 길이(초)
+  rise: 4.5,        // 비상 단계
+  cover: 3.5,       // 덮임 단계
+  enterHold: 0.6,   // 이 시간 이상 서 있으면 시작
+  idleCooldown: 1.5,// 순환 후 다시 시작하기까지 대기
+  absentLimit: 2.5, // 사람이 사라지면 이 시간 후 마무리
+  doneHold: 0.8,    // 완성도 도달 후 비상까지
+  figure: 0.17,     // 화면 높이 대비 몸통 길이
+};
+const FONT = '"Pretendard","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif';
+const IMP = 0.5; // 자국 캔버스 해상도 비율(부드러운 가장자리 + 성능)
+
+/* ───────── 캔버스 ───────── */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const video = document.getElementById('v');
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const dent = mk(1, 1), shade = mk(1, 1); // 눌린 눈(밝은 면) / 안쪽 그림자
+let W = 0, H = 0, DPR = 1, bg = null, glints = [], flakes = [];
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+  W = cv.width = Math.round(innerWidth * DPR);
+  H = cv.height = Math.round(innerHeight * DPR);
+  for (const c of [dent, shade]) { c.width = Math.round(W * IMP); c.height = Math.round(H * IMP); }
+  buildBackground();
+  buildSnow();
+}
+addEventListener('resize', resize);
+
+function buildBackground() {
+  bg = mk(W, H);
+  const g = bg.getContext('2d');
+  const rg = g.createRadialGradient(W / 2, H * 0.55, H * 0.1, W / 2, H * 0.55, Math.hypot(W, H) * 0.62);
+  rg.addColorStop(0, '#e6eef8');
+  rg.addColorStop(0.55, '#c8d6ea');
+  rg.addColorStop(1, '#8ea4c6');
+  g.fillStyle = rg; g.fillRect(0, 0, W, H);
+  // 눈 결: 아주 옅은 얼룩
+  for (let i = 0; i < 900; i++) {
+    const x = Math.random() * W, y = Math.random() * H, r = (Math.random() * 30 + 6) * DPR;
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(120,145,185,0.035)';
+    g.beginPath(); g.ellipse(x, y, r * 1.6, r, 0, 0, Math.PI * 2); g.fill();
+  }
+  glints = Array.from({ length: 140 }, () => ({
+    x: Math.random() * W, y: Math.random() * H, ph: Math.random() * 6.28, sp: 0.6 + Math.random() * 1.6,
+  }));
+}
+
+function buildSnow() {
+  const n = Math.round((W * H) / (1920 * 1080 * DPR * DPR) * 320) + 120;
+  flakes = Array.from({ length: n }, () => newFlake(true));
+}
+function newFlake(anywhere) {
+  const z = Math.random();
+  return {
+    x: Math.random() * W, y: anywhere ? Math.random() * H : -10 * DPR,
+    r: (0.8 + z * 3.2) * DPR, vy: (25 + z * 70) * DPR, ph: Math.random() * 6.28, z,
+    extra: false,
+  };
+}
+
+/* ───────── 오디오 (첫 클릭/키 입력 또는 자동재생 허용 시) ───────── */
+let actx = null;
+function audioOn() {
+  try {
+    if (!actx) { actx = new AudioContext(); startWind(); }
+    if (actx.state === 'suspended') actx.resume();
+  } catch (e) { /* 오디오 없음 */ }
+}
+addEventListener('pointerdown', audioOn);
+addEventListener('keydown', audioOn);
+
+function startWind() {
+  const len = actx.sampleRate * 3, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+  const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 420; bp.Q.value = 0.6;
+  const g = actx.createGain(); g.gain.value = 0.018;
+  src.connect(bp).connect(g).connect(actx.destination); src.start();
+}
+function chime() {
+  if (!actx || actx.state !== 'running') return;
+  const notes = [783.99, 987.77, 1174.66, 1567.98, 1975.53];
+  notes.forEach((f, i) => {
+    const t = actx.currentTime + i * 0.13;
+    for (const [type, mul, vol] of [['sine', 1, 0.12], ['triangle', 2, 0.03]]) {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = type; o.frequency.value = f * mul;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 3);
+    }
+  });
+}
+
+/* ───────── 포즈 인식 ───────── */
+let landmarker = null, status = '카메라와 포즈 인식을 준비하고 있어요…';
+async function init() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false,
+    });
+    video.srcObject = stream; await video.play();
+  } catch (e) {
+    console.error(e); status = '카메라를 사용할 수 없어요. 연결과 권한을 확인해 주세요.'; return;
+  }
+  try {
+    const files = await FilesetResolver.forVisionTasks('./vendor/tasks-vision/wasm');
+    const make = delegate => PoseLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: './models/pose_landmarker_lite.task', delegate },
+      runningMode: 'VIDEO', numPoses: 2,
+      minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+    });
+    try { landmarker = await make('GPU'); } catch (e) { console.warn('GPU 실패, CPU로 전환', e); landmarker = await make('CPU'); }
+    status = '';
+  } catch (e) {
+    console.error(e); status = '포즈 인식 모델을 불러오지 못했어요.';
+  }
+  audioOn(); // 키오스크 자동재생 허용 시 바로 소리 시작
+}
+
+/* ───────── 사람 추적 (지정 위치 2곳: 왼쪽/오른쪽) ───────── */
+const NAMES = { lSh: 11, rSh: 12, lEl: 13, rEl: 14, lWr: 15, rWr: 16, lHip: 23, rHip: 24, lKn: 25, rKn: 26, lAn: 27, rAn: 28 };
+const tracks = [newTrack(), newTrack()];
+function newTrack() {
+  return { sm: null, lastSeen: -99, firstSeen: 0, k: 0, ax: 0, ay: 0, s: 0, pts: null, head: null,
+    wMin: [999, 999], wMax: [-999, -999], legMax: 0, hasLegs: false, used: false, angelHead: null, angelS: 0 };
+}
+function resetProgress(tr) {
+  tr.wMin = [999, 999]; tr.wMax = [-999, -999]; tr.legMax = 0; tr.hasLegs = false; tr.used = false; tr.angelHead = null;
+}
+const present = tr => now - tr.lastSeen < 0.4;
+
+const vis = p => p.v ?? 1;
+const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function angleBetween(ax, ay, bx, by) {
+  const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+  if (!la || !lb) return 0;
+  return Math.acos(clamp((ax * bx + ay * by) / (la * lb), -1, 1)) * 180 / Math.PI;
+}
+
+function ingest(list) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const items = list
+    .filter(lm => [11, 12, 23, 24].every(i => vis({ v: lm[i].visibility }) > 0.5))
+    .map(lm => ({ lm, hx: 1 - (lm[23].x + lm[24].x) / 2 }))
+    .sort((a, b) => a.hx - b.hx);
+  const assign = [null, null];
+  if (items.length >= 2) { assign[0] = items[0]; assign[1] = items[1]; }
+  else if (items.length === 1) {
+    const live = tracks.map(present);
+    // 한 명이면 이미 추적 중인 자리를 유지(가운데를 넘어가도 진행도가 끊기지 않게)
+    const slot = live[0] && !live[1] ? 0 : live[1] && !live[0] ? 1 : (items[0].hx < 0.5 ? 0 : 1);
+    assign[slot] = items[0];
+  }
+  assign.forEach((it, i) => { if (it) updateTrack(tracks[i], it.lm, vw, vh); });
+}
+
+function updateTrack(tr, lm, vw, vh) {
+  const raw = lm.map(p => ({ x: (1 - p.x) * vw, y: p.y * vh, v: p.visibility ?? 1 }));
+  const fresh = !present(tr) || !tr.sm;
+  if (fresh) { tr.sm = raw.map(p => ({ ...p })); tr.firstSeen = now; }
+  else tr.sm.forEach((p, i) => { const r = raw[i]; p.x += (r.x - p.x) * 0.6; p.y += (r.y - p.y) * 0.6; p.v += (r.v - p.v) * 0.5; });
+  tr.lastSeen = now;
+
+  const S = tr.sm;
+  const hip = mid(S[23], S[24]), sh = mid(S[11], S[12]);
+  const torso = Math.max(Math.hypot(sh.x - hip.x, sh.y - hip.y), 1);
+  // 거리와 상관없이 같은 크기의 천사가 되도록 몸통 길이로 정규화
+  const kT = (H * CFG.figure) / torso;
+  const axT = clamp(W * 0.5 + (hip.x / vw - 0.5) * W * 1.25, W * 0.18, W * 0.82);
+  const a = fresh ? 1 : state === 'draw' ? 0.04 : 0.15;
+  tr.k += (kT - tr.k) * a; tr.ax += (axT - tr.ax) * a; tr.ay = H * 0.6;
+  tr.s = torso * tr.k;
+
+  const P = {};
+  for (const [n, i] of Object.entries(NAMES)) P[n] = { x: tr.ax + (S[i].x - hip.x) * tr.k, y: tr.ay + (S[i].y - hip.y) * tr.k, v: S[i].v };
+  P.shM = mid(P.lSh, P.rSh); P.hipM = mid(P.lHip, P.rHip);
+  const ux = P.shM.x - P.hipM.x, uy = P.shM.y - P.hipM.y, ul = Math.hypot(ux, uy) || 1;
+  P.head = { x: P.shM.x + ux / ul * tr.s * 0.5, y: P.shM.y + uy / ul * tr.s * 0.5 };
+  tr.pts = P;
+
+  if (state !== 'draw') return;
+  // 진행도: 팔을 휘저은 각도 범위 + 다리를 벌린 정도
+  const dx = hip.x - sh.x, dy = hip.y - sh.y;
+  [[11, 15], [12, 16]].forEach(([s, w], side) => {
+    if (S[w].v < 0.5) return;
+    const ang = angleBetween(S[w].x - S[s].x, S[w].y - S[s].y, dx, dy);
+    tr.wMin[side] = Math.min(tr.wMin[side], ang); tr.wMax[side] = Math.max(tr.wMax[side], ang);
+  });
+  const [la, ra] = S[27].v > 0.5 && S[28].v > 0.5 ? [27, 28] : S[25].v > 0.5 && S[26].v > 0.5 ? [25, 26] : [];
+  if (la) {
+    tr.hasLegs = true;
+    tr.legMax = Math.max(tr.legMax, angleBetween(S[la].x - S[23].x, S[la].y - S[23].y, S[ra].x - S[24].x, S[ra].y - S[24].y));
+  }
+  tr.used = true;
+}
+
+function trackProgress(tr) {
+  if (!tr.used) return 0;
+  const wing = [0, 1].reduce((s, i) => s + (tr.wMax[i] > tr.wMin[i] ? clamp((tr.wMax[i] - tr.wMin[i]) / 110, 0, 1) : 0), 0) / 2;
+  const leg = clamp((tr.legMax - 10) / 30, 0, 1);
+  return tr.hasLegs ? wing * 0.75 + leg * 0.25 : wing;
+}
+
+/* ───────── 눈 위 자국 ───────── */
+function limb(c, pts, width) {
+  c.lineWidth = width;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (vis(a) < 0.35 || vis(b) < 0.35) break;
+    c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+  }
+}
+function stamp(tr) {
+  const P = tr.pts, s = tr.s;
+  for (const [c, col] of [[shade.getContext('2d'), '#8ea3c4'], [dent.getContext('2d'), '#c6d4e8']]) {
+    c.save(); c.scale(IMP, IMP);
+    c.strokeStyle = c.fillStyle = col; c.lineCap = c.lineJoin = 'round';
+    limb(c, [P.lSh, P.lEl, P.lWr], s * 0.24); limb(c, [P.rSh, P.rEl, P.rWr], s * 0.24);
+    limb(c, [P.lHip, P.lKn, P.lAn], s * 0.3); limb(c, [P.rHip, P.rKn, P.rAn], s * 0.3);
+    c.lineWidth = s * 0.3;
+    c.beginPath(); c.moveTo(P.lSh.x, P.lSh.y); c.lineTo(P.rSh.x, P.rSh.y); c.lineTo(P.rHip.x, P.rHip.y); c.lineTo(P.lHip.x, P.lHip.y); c.closePath();
+    c.fill(); c.stroke();
+    c.lineWidth = s * 0.2; c.beginPath(); c.moveTo(P.shM.x, P.shM.y); c.lineTo(P.head.x, P.head.y); c.stroke();
+    c.beginPath(); c.arc(P.head.x, P.head.y, s * 0.3, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+  tr.angelHead = { ...P.head }; tr.angelS = s;
+}
+function clearImprint() {
+  for (const c of [dent, shade]) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+}
+
+/* ───────── 비상하는 천사 ───────── */
+let angel = null; // { sprite, points }
+let sparks = [];
+function buildAngel() {
+  const w = dent.width, h = dent.height;
+  const tint = mk(w, h), t = tint.getContext('2d');
+  t.drawImage(dent, 0, 0); t.globalCompositeOperation = 'source-in'; t.fillStyle = '#fffaf0'; t.fillRect(0, 0, w, h);
+  const sprite = mk(w, h), g = sprite.getContext('2d');
+  g.shadowColor = 'rgba(255,205,120,0.95)';
+  g.shadowBlur = 40 * IMP * DPR; g.drawImage(tint, 0, 0);
+  g.shadowBlur = 14 * IMP * DPR; g.drawImage(tint, 0, 0);
+  // 머리 위 후광
+  for (const tr of tracks) {
+    if (!tr.angelHead) continue;
+    const s = tr.angelS * IMP, x = tr.angelHead.x * IMP, y = tr.angelHead.y * IMP - s * 0.55;
+    g.shadowBlur = 20 * IMP * DPR; g.strokeStyle = '#ffd98a'; g.lineWidth = s * 0.06;
+    g.beginPath(); g.ellipse(x, y, s * 0.3, s * 0.08, 0, 0, Math.PI * 2); g.stroke();
+  }
+  // 반짝이 출발점
+  const data = dent.getContext('2d').getImageData(0, 0, w, h).data, pts = [];
+  for (let y = 0; y < h; y += 3) for (let x = 0; x < w; x += 3) if (data[(y * w + x) * 4 + 3] > 128) pts.push({ x: x / IMP, y: y / IMP });
+  for (let i = pts.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [pts[i], pts[j]] = [pts[j], pts[i]]; }
+  angel = { sprite, points: pts.slice(0, 800) };
+}
+
+/* ───────── 상태 흐름: 눈 → 몸짓 → 비상 → 덮임 ───────── */
+let state = 'idle', st = 0, doneT = 0, absentT = 0, now = 0;
+function go(s) {
+  state = s; st = 0;
+  if (s === 'draw') { tracks.forEach(resetProgress); doneT = 0; absentT = 0; clearImprint(); }
+  if (s === 'rise') { buildAngel(); chime(); }
+  if (s === 'cover') { for (let i = 0; i < flakes.length * 0.8; i++) flakes.push({ ...newFlake(false), y: -Math.random() * H * 0.5, extra: true }); }
+  if (s === 'idle') { clearImprint(); angel = null; sparks = []; }
+}
+function sessionProgress() { return Math.max(...tracks.map(trackProgress)); }
+
+function updateState(dt) {
+  st += dt;
+  const live = tracks.filter(present);
+  if (state === 'idle') {
+    if (st > CFG.idleCooldown && live.some(tr => now - tr.firstSeen > CFG.enterHold)) go('draw');
+  } else if (state === 'draw') {
+    live.forEach(stamp);
+    const p = sessionProgress();
+    doneT = p >= 0.9 ? doneT + dt : 0;
+    absentT = live.length ? 0 : absentT + dt;
+    if (doneT > CFG.doneHold) go('rise');
+    else if (st > CFG.drawMax) go(p > 0.25 ? 'rise' : 'cover');
+    else if (absentT > CFG.absentLimit) go(p > 0.35 ? 'rise' : 'cover');
+  } else if (state === 'rise') {
+    if (st > CFG.rise) go('cover');
+  } else if (state === 'cover') {
+    if (st > CFG.cover) go('idle');
+  }
+}
+
+/* ───────── 그리기 ───────── */
+const ease = p => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+let glow = null;
+function glowSprite() {
+  if (glow) return glow;
+  glow = mk(128, 128); const g = glow.getContext('2d');
+  const rg = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  rg.addColorStop(0, 'rgba(255,255,255,0.95)'); rg.addColorStop(0.25, 'rgba(225,238,255,0.55)'); rg.addColorStop(1, 'rgba(200,220,255,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
+  return glow;
+}
+
+function render(dt) {
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.drawImage(bg, 0, 0);
+
+  // 눈 결 반짝임
+  for (const g of glints) {
+    const a = Math.pow(Math.max(0, Math.sin(now * g.sp + g.ph)), 12);
+    if (a < 0.02) continue;
+    const r = 5 * DPR * a;
+    ctx.strokeStyle = `rgba(255,255,255,${a})`; ctx.lineWidth = DPR;
+    ctx.beginPath(); ctx.moveTo(g.x - r, g.y); ctx.lineTo(g.x + r, g.y); ctx.moveTo(g.x, g.y - r); ctx.lineTo(g.x, g.y + r); ctx.stroke();
+  }
+
+  // 자국
+  const impAlpha = state === 'cover' ? 1 - ease(clamp(st / CFG.cover, 0, 1)) : 1;
+  if (impAlpha > 0.01) {
+    ctx.globalAlpha = impAlpha; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(shade, 0, -6 * DPR, W, H);
+    ctx.drawImage(dent, 0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+
+  // 비상
+  if (state === 'rise' && angel) {
+    const p = clamp(st / CFG.rise, 0, 1), e = ease(p);
+    const dy = -e * H * 0.32, sc = 1 + e * 0.08;
+    const a = p < 0.15 ? p / 0.15 : p > 0.72 ? (1 - p) / 0.28 : 1;
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.translate(W / 2, H / 2 + dy); ctx.scale(sc, sc); ctx.translate(-W / 2, -H / 2);
+    ctx.drawImage(angel.sprite, 0, 0, W, H);
+    ctx.restore();
+    if (p < 0.85) for (let i = 0; i < 4; i++) {
+      const q = angel.points[(Math.random() * angel.points.length) | 0];
+      if (q) sparks.push({ x: W / 2 + (q.x - W / 2) * sc, y: H / 2 + (q.y - H / 2) * sc + dy, vx: (Math.random() - 0.5) * 30 * DPR, vy: -(40 + Math.random() * 80) * DPR, life: 1, r: (1 + Math.random() * 2.5) * DPR });
+    }
+  }
+  if (sparks.length) {
+    ctx.globalCompositeOperation = 'lighter';
+    sparks = sparks.filter(s => (s.life -= dt * 0.7) > 0);
+    for (const s of sparks) {
+      s.x += s.vx * dt; s.y += s.vy * dt;
+      ctx.fillStyle = `rgba(255,${200 + ((s.r * 13) | 0) % 55},140,${s.life})`;
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // 손·발 빛 (몸짓이 잘 잡히고 있다는 피드백)
+  if (state === 'idle' || state === 'draw') {
+    const gs = glowSprite();
+    for (const tr of tracks) {
+      if (!present(tr) || !tr.pts) continue;
+      for (const n of ['lWr', 'rWr', 'lAn', 'rAn']) {
+        const p = tr.pts[n]; if (vis(p) < 0.5) continue;
+        const r = tr.s * 0.35;
+        ctx.drawImage(gs, p.x - r, p.y - r, r * 2, r * 2);
+      }
+    }
+  }
+
+  // 눈송이
+  const boost = state === 'cover' ? 1.8 : 1;
+  for (const f of flakes) {
+    f.y += f.vy * dt * boost; f.x += Math.sin(now * (0.4 + f.z) + f.ph) * 12 * DPR * dt;
+    if (f.y > H + 10 * DPR) {
+      if (f.extra) { f.dead = true; continue; }
+      Object.assign(f, newFlake(false));
+    }
+    ctx.fillStyle = `rgba(255,255,255,${0.45 + f.z * 0.5})`;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
+  }
+  if (flakes.some(f => f.dead)) flakes = flakes.filter(f => !f.dead);
+
+  drawText();
+  if (debug) drawDebug();
+}
+
+function text(str, x, y, size, weight = 500, alpha = 1, spacing = 0) {
+  ctx.font = `${weight} ${size * DPR}px ${FONT}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${spacing * DPR}px`;
+  ctx.shadowColor = 'rgba(30,50,90,0.45)'; ctx.shadowBlur = 14 * DPR;
+  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+  ctx.fillText(str, x, y);
+  ctx.shadowBlur = 0;
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+}
+
+function drawText() {
+  const u = Math.min(W / DPR / 1920, H / DPR / 1080) * 1.0;
+  const cx = W / 2;
+  if (status) { text(status, cx, H / 2, 34 * u, 500); return; }
+  if (state === 'idle') {
+    const a = clamp(st / 1.2, 0, 1);
+    text('CHRISTMAS SEASON · SNOW ANGEL', cx, H * 0.13, 20 * u, 600, 0.85 * a, 6 * u);
+    text('스노우 엔젤', cx, H * 0.21, 84 * u, 700, a);
+    text('표시된 자리에 서서 팔과 다리를 크게 저어 보세요', cx, H * 0.29, 32 * u, 500, 0.95 * a);
+    text('두 명이 나란히 서면 함께 천사가 돼요', cx, H * 0.34, 24 * u, 400, 0.75 * a);
+  } else if (state === 'draw') {
+    const p = sessionProgress();
+    text(p < 0.5 ? '팔을 위아래로 크게 휘저어 날개를 만들어요' : '다리도 벌렸다 모으며 치마를 그려요', cx, H * 0.1, 34 * u, 600);
+    const bw = W * 0.22, bh = 6 * DPR * u, by = H * 0.15;
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fillRect(cx - bw / 2, by, bw, bh);
+    ctx.fillStyle = 'rgba(255,236,190,0.95)'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / 0.9, 0, 1), bh);
+  } else if (state === 'rise') {
+    const p = st / CFG.rise, a = p < 0.2 ? p / 0.2 : p > 0.8 ? (1 - p) / 0.2 : 1;
+    text('Merry Christmas', cx, H * 0.12, 64 * u, 700, a, 2 * u);
+    text('당신의 천사가 하늘로 날아올라요', cx, H * 0.2, 30 * u, 500, a);
+  }
+}
+
+/* ───────── 운영자용: D 디버그, F 전체화면, R 초기화 ───────── */
+let debug = false, fps = 60;
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'd') debug = !debug;
+  if (k === 'f') (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
+  if (k === 'r') go('idle');
+});
+function drawDebug() {
+  const w = 320 * DPR, h = video.videoHeight ? w * video.videoHeight / video.videoWidth : w * 9 / 16, x = W - w - 16 * DPR, y = H - h - 16 * DPR;
+  if (video.readyState >= 2) { ctx.save(); ctx.translate(x + w, y); ctx.scale(-1, 1); ctx.drawImage(video, 0, 0, w, h); ctx.restore(); }
+  for (const tr of tracks) if (present(tr) && tr.pts) {
+    ctx.fillStyle = '#ff5a7a';
+    for (const n of Object.keys(NAMES)) { const p = tr.pts[n]; ctx.beginPath(); ctx.arc(p.x, p.y, 4 * DPR, 0, 7); ctx.fill(); }
+  }
+  ctx.font = `${13 * DPR}px monospace`; ctx.textAlign = 'left'; ctx.fillStyle = '#123';
+  const info = [`state ${state} ${st.toFixed(1)}s  fps ${fps.toFixed(0)}`,
+    ...tracks.map((t, i) => `P${i + 1} ${present(t) ? 'on ' : 'off'} progress ${(trackProgress(t) * 100).toFixed(0)}%`)];
+  info.forEach((s, i) => ctx.fillText(s, x, y - 10 * DPR - (info.length - 1 - i) * 16 * DPR));
+}
+
+/* ───────── 루프 ───────── */
+let last = performance.now(), lastVideoTime = -1;
+function frame(ts) {
+  const dt = Math.min(0.05, Math.max(0, (ts - last) / 1000)); last = ts; now += dt;
+  if (dt > 0) fps += (1 / dt - fps) * 0.05;
+  if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    try { ingest(landmarker.detectForVideo(video, ts).landmarks || []); } catch (e) { console.error(e); }
+  }
+  updateState(dt);
+  render(dt);
+  requestAnimationFrame(frame);
+}
+
+resize();
+requestAnimationFrame(frame);
+init();
+</script>
+</body>
+</html>
