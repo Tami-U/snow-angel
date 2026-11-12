@@ -10,19 +10,19 @@
   #c { display: block; width: 100vw; height: 100vh; }
   video { display: none; }
   #people-ui { position: fixed; inset: auto clamp(16px, 3vw, 52px) clamp(16px, 3vh, 40px); display: flex; justify-content: space-between; pointer-events: none; }
-  /* 서리 낀 유리 카드 */
-  .person-card { width: clamp(190px, 17vw, 300px); padding: 12px; color: #1c3054; background: rgba(255, 255, 255, 0.68); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); border: 1px solid rgba(255, 255, 255, 0.85); border-radius: 18px; box-shadow: 0 18px 40px rgba(60, 86, 135, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.9); font: 600 clamp(16px, 1.25vw, 22px) / 1.4 "Pretendard", "Malgun Gothic", sans-serif; opacity: 0.92; transition: opacity 0.25s, border-color 0.25s, box-shadow 0.25s; }
-  .person-card[data-active="true"] { opacity: 1; border-color: rgba(240, 196, 112, 0.95); box-shadow: 0 18px 44px rgba(60, 86, 135, 0.22), 0 0 0 3px rgba(240, 196, 112, 0.28); }
+  .person-card { width: clamp(210px, 14vw, 280px); color: #203c59; font: 600 clamp(16px, 1.1vw, 22px) / 1.35 "Pretendard", "Malgun Gothic", sans-serif; opacity: 0.82; transition: opacity 0.25s; }
+  .person-card[data-active="true"] { opacity: 1; }
   .person-head, .person-meta { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-  .person-head { margin: 2px 3px 8px; font-weight: 700; }
-  .person-head span:last-child { color: #6d82a8; font-size: 0.78em; font-weight: 600; letter-spacing: 0.08em; }
-  .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 11px; background: url('./assets/snow-angel-mark.png') center / min(190px, 90%) auto no-repeat, radial-gradient(120% 80% at 50% 100%, #ffffff, #dfe8f4 60%, #c8d6ea); box-shadow: inset 0 2px 8px rgba(70, 95, 140, 0.18); }
+  .person-head { margin: 0 2px 9px; font-weight: 700; text-shadow: 0 1px 6px rgba(255,255,255,0.9); }
+  .person-head span:last-child { color: #6684a5; font-size: 0.72em; font-weight: 600; letter-spacing: 0.12em; }
+  .person-preview { display: block; box-sizing: border-box; width: 100%; aspect-ratio: 4 / 5; border: 2px solid rgba(255,255,255,0.9); border-radius: 14px; background: url('./assets/snow-angel-mark.png') center / min(190px, 90%) auto no-repeat, radial-gradient(120% 80% at 50% 100%, #ffffff, #dfe8f4 60%, #c8d6ea); box-shadow: 0 12px 30px rgba(48,77,115,0.18); }
   .person-card[data-active="true"] .person-preview { background: #dfe8f4; }
-  .person-meta { margin: 9px 3px 7px; font-size: 0.9em; color: #294064; }
+  .person-card[data-active="true"] .person-preview { border-color: #e9f5fc; box-shadow: 0 12px 30px rgba(48,77,115,0.2), 0 0 0 3px rgba(106,151,187,0.42); }
+  .person-meta { margin: 10px 2px 7px; font-size: 0.9em; color: #294064; text-shadow: 0 1px 6px rgba(255,255,255,0.9); }
   .person-percent:empty { display: none; }
-  .person-progress { height: 5px; overflow: hidden; border-radius: 5px; background: rgba(40, 64, 110, 0.12); }
-  .person-progress span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #f3cf86, #e2a548); transition: width 0.2s; }
-  @media (max-width: 800px) { .person-card { width: clamp(120px, 22vw, 170px); padding: 7px; } }
+  .person-progress { height: 3px; margin: 0 2px; overflow: hidden; border-radius: 3px; background: rgba(44,79,115,0.2); }
+  .person-progress span { display: block; height: 100%; width: 0; background: #6c9dc2; transition: width 0.2s; }
+  @media (max-width: 800px) { .person-card { width: clamp(120px, 22vw, 170px); } }
 </style>
 </head>
 <body>
@@ -652,15 +652,23 @@ let angel = null;
 function buildAngel() {
   const w = dent.width, h = dent.height;
   const tint = mk(w, h), t = tint.getContext('2d');
-  t.filter = `blur(${1.2 * IMP * DPR}px)`; t.drawImage(dent, 0, 0); t.filter = 'none';
+  t.drawImage(dent, 0, 0);
   t.globalCompositeOperation = 'source-in';
   const tg = t.createLinearGradient(0, 0, 0, h);
   tg.addColorStop(0, '#ffffff'); tg.addColorStop(0.55, '#e8f3fb'); tg.addColorStop(1, '#bfd5e8');
   t.fillStyle = tg; t.fillRect(0, 0, w, h);
   const sprite = mk(w, h), g = sprite.getContext('2d');
-  g.shadowColor = 'rgba(112,155,193,0.35)';
-  g.globalAlpha = 0.55; g.shadowBlur = 18 * IMP * DPR; g.drawImage(tint, 0, 0);
-  g.shadowBlur = 0; g.globalAlpha = 0.7; g.drawImage(tint, 0, 0);
+  g.shadowColor = 'rgba(112,155,193,0.22)';
+  g.globalAlpha = 0.4; g.shadowBlur = 9 * IMP * DPR; g.drawImage(tint, 0, 0);
+  g.shadowBlur = 0; g.globalAlpha = 0.95; g.drawImage(tint, 0, 0);
+  g.globalAlpha = 1;
+  for (const tr of tracks) {
+    if (!tr.angelHead) continue;
+    const s = tr.s * IMP, x = tr.angelHead.x * IMP, y = tr.angelHead.y * IMP - s * 0.55;
+    g.strokeStyle = '#f8e6bf'; g.lineWidth = Math.max(2, s * 0.035);
+    g.shadowColor = 'rgba(221,190,127,0.4)'; g.shadowBlur = 8 * IMP * DPR;
+    g.beginPath(); g.ellipse(x, y, s * 0.31, s * 0.075, 0, 0, Math.PI * 2); g.stroke();
+  }
   angel = { sprite };
 }
 
@@ -753,7 +761,7 @@ function render(dt) {
     const p = clamp(st / CFG.rise, 0, 1), e = ease(p);
     const dy = -e * H * 0.16, sc = 1 + e * 0.015;
     const a = p < 0.18 ? p / 0.18 : p > 0.7 ? (1 - p) / 0.3 : 1;
-    ctx.save(); ctx.globalAlpha = 0.6 * a;
+    ctx.save(); ctx.globalAlpha = 0.78 * a;
     ctx.translate(W / 2, H / 2 + dy); ctx.scale(sc, sc); ctx.translate(-W / 2, -H / 2);
     ctx.drawImage(angel.sprite, 0, 0, W, H);
     ctx.restore();
@@ -802,8 +810,7 @@ function text(str, x, y, size, weight = 500, alpha = 1, spacing = 0) {
   ctx.font = `${weight} ${size * DPR}px ${FONT}`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if ('letterSpacing' in ctx) ctx.letterSpacing = `${spacing * DPR}px`;
-  // 밝은 눈 위에서도 읽히게: 짙은 남색 글자 + 흰 번짐
-  ctx.shadowColor = `rgba(255,255,255,${0.9 * alpha})`; ctx.shadowBlur = 18 * DPR;
+  ctx.shadowColor = `rgba(255,255,255,${0.65 * alpha})`; ctx.shadowBlur = 6 * DPR;
   ctx.fillStyle = `rgba(28,48,84,${alpha})`;
   ctx.fillText(str, x, y);
   ctx.shadowBlur = 0;
@@ -815,26 +822,24 @@ function drawText() {
   const cx = W / 2;
   if (status) { text(status, cx, H / 2, 34 * u, 500); return; }
   if (state === 'idle' || state === 'draw') {
-    ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.76)';
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-    ctx.lineWidth = 2 * DPR;
-    ctx.beginPath(); ctx.roundRect(W * 0.14, H * 0.012, W * 0.72, H * 0.16, 20 * DPR);
-    ctx.fill(); ctx.stroke();
-    ctx.restore();
+    const veil = ctx.createLinearGradient(0, 0, 0, H * 0.22);
+    veil.addColorStop(0, 'rgba(246,250,255,0.84)');
+    veil.addColorStop(0.65, 'rgba(246,250,255,0.45)');
+    veil.addColorStop(1, 'rgba(246,250,255,0)');
+    ctx.fillStyle = veil; ctx.fillRect(0, 0, W, H * 0.22);
   }
   if (state === 'idle') {
     const a = clamp(st / 1.2, 0, 1);
-    text('CHRISTMAS SEASON · SNOW ANGEL', cx, H * 0.035, 16 * u, 600, 0.85 * a, 5 * u);
-    text('스노우 엔젤', cx, H * 0.085, 56 * u, 700, a);
-    text('TV 앞 왼쪽·오른쪽 표시 위에 서서 팔다리를 저어 보세요', cx, H * 0.135, 28 * u, 600, 0.95 * a);
+    text('CHRISTMAS SEASON  /  SNOW ANGEL', cx, H * 0.037, 17 * u, 600, 0.7 * a, 4 * u);
+    text('스노우 엔젤', cx, H * 0.09, 58 * u, 700, a);
+    text('왼쪽 또는 오른쪽 자리에 서서 팔을 크게 움직여 보세요', cx, H * 0.15, 27 * u, 500, 0.9 * a);
   } else if (state === 'draw') {
     const p = sessionProgress();
-    text(p < 0.5 ? '팔을 한두 번 크게 저어 보세요' : '좋아요! 조금만 더 움직이면 완성돼요', cx, H * 0.06, 32 * u, 700);
-    text('두 명이면 각자 움직여야 함께 완성돼요', cx, H * 0.112, 23 * u, 600);
-    const bw = W * 0.22, bh = 7 * DPR * u, by = H * 0.15;
+    text(p < 0.5 ? '팔을 크게 저어 천사를 만들어 보세요' : '좋아요, 눈 위에 천사가 그려지고 있어요', cx, H * 0.07, 33 * u, 700);
+    text('두 명이면 각자 움직여야 함께 완성돼요', cx, H * 0.123, 23 * u, 500);
+    const bw = W * 0.22, bh = 4 * DPR * u, by = H * 0.17;
     ctx.fillStyle = 'rgba(40,64,110,0.15)'; ctx.fillRect(cx - bw / 2, by, bw, bh);
-    ctx.fillStyle = 'rgba(226,170,72,0.95)'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / CFG.completeProgress, 0, 1), bh);
+    ctx.fillStyle = '#6c9dc2'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / CFG.completeProgress, 0, 1), bh);
   } else if (state === 'rise') {
     const p = st / CFG.rise, a = p < 0.2 ? p / 0.2 : p > 0.8 ? (1 - p) / 0.2 : 1;
     text('Merry Christmas', cx, H * 0.06, 52 * u, 700, a, 2 * u);
