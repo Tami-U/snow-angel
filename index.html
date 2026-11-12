@@ -405,7 +405,7 @@ const NAMES = { lSh: 11, rSh: 12, lEl: 13, rEl: 14, lWr: 15, rWr: 16, lHip: 23, 
 const tracks = [newTrack(), newTrack()];
 function newTrack() {
   return { sm: null, lastSeen: -99, firstSeen: 0, anchorX: null, size: 0, k: 0, ax: 0, ay: 0, s: 0, pts: null, head: null,
-    wMin: [999, 999], wMax: [-999, -999], legMax: 0, hasLegs: false, used: false, angelHead: null, angelS: 0 };
+    wMin: [999, 999], wMax: [-999, -999], legMax: 0, hasLegs: false, used: false, angelHead: null };
 }
 function resetProgress(tr) {
   tr.wMin = [999, 999]; tr.wMax = [-999, -999]; tr.legMax = 0; tr.hasLegs = false; tr.used = false; tr.angelHead = null;
@@ -600,7 +600,7 @@ function bodyShape(c, P, s, col) {
 let imprintDirty = true;
 function stamp(tr) {
   bodyShape(dent.getContext('2d'), tr.pts, tr.s, '#ffffff'); // dent = 눌린 모양 마스크
-  tr.angelHead = { ...tr.pts.head }; tr.angelS = tr.s;
+  tr.angelHead = { ...tr.pts.head };
   imprintDirty = true;
 }
 
@@ -647,34 +647,21 @@ function composeImprint() {
   out.globalAlpha = 0.55; out.drawImage(tmpA, 0, 0); out.globalAlpha = 1;
 }
 
-/* ───────── 비상하는 천사 ───────── */
-let angel = null; // { sprite, points }
-let sparks = [];
+/* ───────── 눈 자국이 떠오르는 장면 ───────── */
+let angel = null;
 function buildAngel() {
   const w = dent.width, h = dent.height;
   const tint = mk(w, h), t = tint.getContext('2d');
   t.filter = `blur(${1.2 * IMP * DPR}px)`; t.drawImage(dent, 0, 0); t.filter = 'none';
   t.globalCompositeOperation = 'source-in';
-  const tg = t.createLinearGradient(0, 0, 0, h); // 위는 흰빛, 아래로 갈수록 금빛
-  tg.addColorStop(0, '#ffffff'); tg.addColorStop(0.5, '#ffeec8'); tg.addColorStop(1, '#ffc86e');
+  const tg = t.createLinearGradient(0, 0, 0, h);
+  tg.addColorStop(0, '#ffffff'); tg.addColorStop(0.55, '#e8f3fb'); tg.addColorStop(1, '#bfd5e8');
   t.fillStyle = tg; t.fillRect(0, 0, w, h);
   const sprite = mk(w, h), g = sprite.getContext('2d');
-  g.shadowColor = 'rgba(255,196,100,0.9)';
-  g.globalAlpha = 0.8; g.shadowBlur = 60 * IMP * DPR; g.drawImage(tint, 0, 0);
-  g.globalAlpha = 1; g.shadowBlur = 18 * IMP * DPR; g.drawImage(tint, 0, 0);
-  g.globalAlpha = 1;
-  // 머리 위 후광
-  for (const tr of tracks) {
-    if (!tr.angelHead) continue;
-    const s = tr.angelS * IMP, x = tr.angelHead.x * IMP, y = tr.angelHead.y * IMP - s * 0.55;
-    g.shadowBlur = 20 * IMP * DPR; g.strokeStyle = '#ffd98a'; g.lineWidth = s * 0.06;
-    g.beginPath(); g.ellipse(x, y, s * 0.3, s * 0.08, 0, 0, Math.PI * 2); g.stroke();
-  }
-  // 반짝이 출발점
-  const data = dent.getContext('2d').getImageData(0, 0, w, h).data, pts = [];
-  for (let y = 0; y < h; y += 3) for (let x = 0; x < w; x += 3) if (data[(y * w + x) * 4 + 3] > 128) pts.push({ x: x / IMP, y: y / IMP });
-  for (let i = pts.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [pts[i], pts[j]] = [pts[j], pts[i]]; }
-  angel = { sprite, points: pts.slice(0, 800) };
+  g.shadowColor = 'rgba(112,155,193,0.35)';
+  g.globalAlpha = 0.55; g.shadowBlur = 18 * IMP * DPR; g.drawImage(tint, 0, 0);
+  g.shadowBlur = 0; g.globalAlpha = 0.7; g.drawImage(tint, 0, 0);
+  angel = { sprite };
 }
 
 /* ───────── 상태 흐름: 눈 → 몸짓 → 비상 → 덮임 ───────── */
@@ -687,7 +674,7 @@ function go(s) {
     const extraCount = Math.round(flakes.filter(f => !f.extra).length * 0.35);
     for (let i = 0; i < extraCount; i++) flakes.push({ ...newFlake(false), y: -Math.random() * H * 0.15, extra: true });
   }
-  if (s === 'idle') { clearImprint(); angel = null; sparks = []; flakes = flakes.filter(f => !f.extra); }
+  if (s === 'idle') { clearImprint(); angel = null; flakes = flakes.filter(f => !f.extra); }
   setAudioLevels();
 }
 function sessionProgress() {
@@ -749,7 +736,8 @@ function render(dt) {
   ctx.globalCompositeOperation = 'source-over';
 
   // 자국
-  const impAlpha = state === 'cover' ? 1 - ease(clamp(st / CFG.cover, 0, 1)) : 1;
+  const impAlpha = state === 'cover' ? 0.65 * (1 - ease(clamp(st / CFG.cover, 0, 1)))
+    : state === 'rise' ? 1 - 0.35 * ease(clamp(st / CFG.rise, 0, 1)) : 1;
   if (impAlpha > 0.01) {
     composeImprint();
     ctx.globalAlpha = impAlpha; ctx.imageSmoothingQuality = 'high';
@@ -763,26 +751,12 @@ function render(dt) {
   // 비상
   if (state === 'rise' && angel) {
     const p = clamp(st / CFG.rise, 0, 1), e = ease(p);
-    const dy = -e * H * 0.32, sc = 1 + e * 0.08;
-    const a = p < 0.15 ? p / 0.15 : p > 0.72 ? (1 - p) / 0.28 : 1;
-    ctx.save(); ctx.globalAlpha = a;
+    const dy = -e * H * 0.16, sc = 1 + e * 0.015;
+    const a = p < 0.18 ? p / 0.18 : p > 0.7 ? (1 - p) / 0.3 : 1;
+    ctx.save(); ctx.globalAlpha = 0.6 * a;
     ctx.translate(W / 2, H / 2 + dy); ctx.scale(sc, sc); ctx.translate(-W / 2, -H / 2);
     ctx.drawImage(angel.sprite, 0, 0, W, H);
     ctx.restore();
-    if (p < 0.85) for (let i = 0; i < 4; i++) {
-      const q = angel.points[(Math.random() * angel.points.length) | 0];
-      if (q) sparks.push({ x: W / 2 + (q.x - W / 2) * sc, y: H / 2 + (q.y - H / 2) * sc + dy, vx: (Math.random() - 0.5) * 30 * DPR, vy: -(40 + Math.random() * 80) * DPR, life: 1, r: (1 + Math.random() * 2.5) * DPR });
-    }
-  }
-  if (sparks.length) {
-    ctx.globalCompositeOperation = 'lighter';
-    sparks = sparks.filter(s => (s.life -= dt * 0.7) > 0);
-    for (const s of sparks) {
-      s.x += s.vx * dt; s.y += s.vy * dt;
-      ctx.fillStyle = `rgba(255,${200 + ((s.r * 13) | 0) % 55},140,${s.life})`;
-      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.globalCompositeOperation = 'source-over';
   }
 
   // 손·발 빛 (몸짓이 잘 잡히고 있다는 피드백)
