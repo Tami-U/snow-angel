@@ -658,8 +658,11 @@ function go(s) {
   state = s; st = 0;
   if (s === 'draw') { tracks.forEach(resetProgress); doneT = 0; absentT = 0; clearImprint(); }
   if (s === 'rise') { buildAngel(); chime(); }
-  if (s === 'cover') { for (let i = 0; i < flakes.length * 0.8; i++) flakes.push({ ...newFlake(false), y: -Math.random() * H * 0.5, extra: true }); }
-  if (s === 'idle') { clearImprint(); angel = null; sparks = []; }
+  if (s === 'cover') {
+    const extraCount = Math.round(flakes.filter(f => !f.extra).length * 0.35);
+    for (let i = 0; i < extraCount; i++) flakes.push({ ...newFlake(false), y: -Math.random() * H * 0.15, extra: true });
+  }
+  if (s === 'idle') { clearImprint(); angel = null; sparks = []; flakes = flakes.filter(f => !f.extra); }
   setAudioLevels();
 }
 function sessionProgress() {
