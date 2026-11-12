@@ -16,7 +16,7 @@
   .person-head, .person-meta { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
   .person-head { margin: 2px 3px 8px; font-weight: 700; }
   .person-head span:last-child { color: #6d82a8; font-size: 0.78em; font-weight: 600; letter-spacing: 0.08em; }
-  .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 11px; background: url('./assets/snow-angel-mark.png') center / min(150px, 75%) auto no-repeat, radial-gradient(120% 80% at 50% 100%, #ffffff, #dfe8f4 60%, #c8d6ea); box-shadow: inset 0 2px 8px rgba(70, 95, 140, 0.18); }
+  .person-preview { display: block; width: 100%; aspect-ratio: 4 / 5; border-radius: 11px; background: url('./assets/snow-angel-mark.png') center / min(190px, 90%) auto no-repeat, radial-gradient(120% 80% at 50% 100%, #ffffff, #dfe8f4 60%, #c8d6ea); box-shadow: inset 0 2px 8px rgba(70, 95, 140, 0.18); }
   .person-card[data-active="true"] .person-preview { background: #dfe8f4; }
   .person-meta { margin: 9px 3px 7px; font-size: 0.82em; color: #3a5079; }
   .person-progress { height: 5px; overflow: hidden; border-radius: 5px; background: rgba(40, 64, 110, 0.12); }
@@ -161,7 +161,7 @@ function buildBackground() {
 }
 
 function buildSnow() {
-  const n = Math.round((W * H) / (1920 * 1080 * DPR * DPR) * 125) + 50;
+  const n = Math.round((W * H) / (1920 * 1080 * DPR * DPR) * 60) + 25;
   flakes = Array.from({ length: n }, () => newFlake(true));
 }
 function makeFlakeSprite() {
@@ -183,8 +183,8 @@ function makeFlakeSprite() {
     }
   };
   g.beginPath(); crystal();
-  g.strokeStyle = 'rgba(65, 107, 163, .65)'; g.lineWidth = 5;
-  g.shadowColor = 'rgba(55, 98, 155, .45)'; g.shadowBlur = 5; g.stroke();
+  g.strokeStyle = 'rgba(85, 135, 190, .45)'; g.lineWidth = 5;
+  g.shadowColor = 'rgba(75, 120, 175, .3)'; g.shadowBlur = 5; g.stroke();
   g.shadowBlur = 0; g.strokeStyle = '#fff'; g.lineWidth = 2.5; g.stroke();
   return canvas;
 }
@@ -193,7 +193,7 @@ function newFlake(anywhere) {
   const z = Math.random();
   return {
     x: Math.random() * W, y: anywhere ? Math.random() * H : -10 * DPR,
-    r: (5 + z * 6) * DPR, vy: (25 + z * 70) * DPR, ph: Math.random() * 6.28, z,
+    r: (10 + z * 10) * DPR, vy: (25 + z * 70) * DPR, ph: Math.random() * 6.28, z,
     extra: false,
   };
 }
