@@ -48,8 +48,8 @@ import { PoseLandmarker, FilesetResolver } from './vendor/tasks-vision/vision_bu
 
 /* ───────── 설정 ───────── */
 const CFG = {
-  drawMin: 6,       // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
-  drawMax: 12,      // 몸짓 단계 최대 길이(초)
+  drawMin: 12,      // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
+  drawMax: 30,      // 몸짓 단계 최대 길이(초)
   rise: 4.5,        // 비상 단계
   cover: 3.5,       // 덮임 단계
   enterHold: 0.6,   // 이 시간 이상 서 있으면 시작
@@ -707,7 +707,7 @@ function updateState(dt) {
     absentT = live.length ? 0 : absentT + dt;
     if (doneT > CFG.doneHold) go('rise');
     else if (st > CFG.drawMax) go(tracks.some(tr => tr.angelHead) ? 'rise' : 'cover');
-    else if (absentT > CFG.absentLimit) go(tracks.some(tr => tr.angelHead) ? 'rise' : 'cover');
+    else if (st >= CFG.drawMin && absentT > CFG.absentLimit) go(tracks.some(tr => tr.angelHead) ? 'rise' : 'cover');
   } else if (state === 'rise') {
     if (st > CFG.rise) go('cover');
   } else if (state === 'cover') {
