@@ -238,11 +238,9 @@ function updateTrack(tr, lm, vw, vh) {
   const S = tr.sm;
   const hip = mid(S[23], S[24]), sh = mid(S[11], S[12]);
   const torso = Math.max(Math.hypot(sh.x - hip.x, sh.y - hip.y), 1);
-  // 거리와 상관없이 같은 크기의 천사가 되도록 몸통 길이로 정규화
-  const kT = (H * CFG.figure) / torso;
-  const axT = clamp(W * 0.5 + (hip.x / vw - 0.5) * W * 1.25, W * 0.18, W * 0.82);
-  const a = fresh ? 1 : state === 'draw' ? 0.04 : 0.15;
-  tr.k += (kT - tr.k) * a; tr.ax += (axT - tr.ax) * a; tr.ay = H * 0.6;
+  // 거울처럼: 카메라에 보이는 위치·크기 그대로 화면에 (cover 맞춤)
+  const sc = Math.max(W / vw, H / vh), ox = (W - vw * sc) / 2, oy = (H - vh * sc) / 2;
+  tr.k = sc; tr.ax = ox + hip.x * sc; tr.ay = oy + hip.y * sc;
   tr.s = torso * tr.k;
 
   tr.hipV = hip;
@@ -273,7 +271,7 @@ function updateTrack(tr, lm, vw, vh) {
 }
 
 /* ───────── 사람 누끼: 배경을 지우고 사람만 눈밭 위에 ───────── */
-const CUT = 0.5; // 누끼 해상도(카메라 대비)
+const CUT = 0.75; // 누끼 해상도(카메라 대비) — 얼굴이 선명하게
 function updateCutout(tr, mask, vw, vh) {
   const cw = Math.round(vw * CUT), ch = Math.round(vh * CUT);
   if (!tr.cut || tr.cut.width !== cw || tr.cut.height !== ch) {
@@ -312,8 +310,7 @@ function drawPeople() {
     sg.addColorStop(0, 'rgba(60,85,130,0.35)'); sg.addColorStop(1, 'rgba(60,85,130,0)');
     ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(0, 0, tr.s * 0.9, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
-    ctx.save(); ctx.globalAlpha = fade;
-    ctx.shadowColor = 'rgba(255,255,255,0.85)'; ctx.shadowBlur = 16 * DPR;
+    ctx.save(); ctx.globalAlpha = fade; ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(tr.cut, x, y, tr.cut.width * k, tr.cut.height * k);
     ctx.restore();
   }
@@ -499,7 +496,7 @@ function render(dt) {
       if (!present(tr) || !tr.pts) continue;
       for (const n of ['lWr', 'rWr', 'lAn', 'rAn']) {
         const p = tr.pts[n]; if (vis(p) < 0.5) continue;
-        const r = tr.s * 0.35;
+        const r = tr.s * 0.22;
         ctx.drawImage(gs, p.x - r, p.y - r, r * 2, r * 2);
       }
     }
@@ -544,20 +541,20 @@ function drawText() {
   if (status) { text(status, cx, H / 2, 34 * u, 500); return; }
   if (state === 'idle') {
     const a = clamp(st / 1.2, 0, 1);
-    text('CHRISTMAS SEASON · SNOW ANGEL', cx, H * 0.13, 20 * u, 600, 0.85 * a, 6 * u);
-    text('스노우 엔젤', cx, H * 0.21, 84 * u, 700, a);
-    text('표시된 자리에 서서 팔과 다리를 크게 저어 보세요', cx, H * 0.29, 32 * u, 500, 0.95 * a);
-    text('두 명이 나란히 서면 함께 천사가 돼요', cx, H * 0.34, 24 * u, 400, 0.75 * a);
+    // 얼굴을 가리지 않게 맨 위 띠에만
+    text('CHRISTMAS SEASON · SNOW ANGEL', cx, H * 0.035, 16 * u, 600, 0.85 * a, 5 * u);
+    text('스노우 엔젤', cx, H * 0.085, 56 * u, 700, a);
+    text('표시된 자리에 서서 팔과 다리를 크게 저어 보세요 · 두 명이 함께해도 좋아요', cx, H * 0.135, 24 * u, 500, 0.95 * a);
   } else if (state === 'draw') {
     const p = sessionProgress();
-    text(p < 0.5 ? '팔을 위아래로 크게 휘저어 날개를 만들어요' : '다리도 벌렸다 모으며 치마를 그려요', cx, H * 0.1, 34 * u, 600);
-    const bw = W * 0.22, bh = 6 * DPR * u, by = H * 0.15;
+    text(p < 0.5 ? '팔을 위아래로 크게 휘저어 날개를 만들어요' : '다리도 벌렸다 모으며 치마를 그려요', cx, H * 0.05, 28 * u, 600);
+    const bw = W * 0.22, bh = 6 * DPR * u, by = H * 0.085;
     ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fillRect(cx - bw / 2, by, bw, bh);
     ctx.fillStyle = 'rgba(255,236,190,0.95)'; ctx.fillRect(cx - bw / 2, by, bw * clamp(p / 0.9, 0, 1), bh);
   } else if (state === 'rise') {
     const p = st / CFG.rise, a = p < 0.2 ? p / 0.2 : p > 0.8 ? (1 - p) / 0.2 : 1;
-    text('Merry Christmas', cx, H * 0.12, 64 * u, 700, a, 2 * u);
-    text('당신의 천사가 하늘로 날아올라요', cx, H * 0.2, 30 * u, 500, a);
+    text('Merry Christmas', cx, H * 0.06, 52 * u, 700, a, 2 * u);
+    text('당신의 천사가 하늘로 날아올라요', cx, H * 0.115, 24 * u, 500, a);
   }
 }
 
@@ -579,7 +576,7 @@ function drawDebug() {
   }
   ctx.font = `${13 * DPR}px monospace`; ctx.textAlign = 'left'; ctx.fillStyle = '#123';
   const info = [`camera ${camLabel}`, `state ${state} ${st.toFixed(1)}s  fps ${fps.toFixed(0)}`,
-    ...tracks.map((t, i) => `P${i + 1} ${present(t) ? 'on ' : 'off'} progress ${(trackProgress(t) * 100).toFixed(0)}%`)];
+    ...tracks.map((t, i) => `P${i + 1} ${present(t) ? 'on ' : 'off'} cutout ${t.hasCut ? 'ok' : 'NO'} progress ${(trackProgress(t) * 100).toFixed(0)}%`)];
   info.forEach((s, i) => ctx.fillText(s, x, y - 10 * DPR - (info.length - 1 - i) * 16 * DPR));
 }
 
