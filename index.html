@@ -48,7 +48,8 @@ import { PoseLandmarker, FilesetResolver } from './vendor/tasks-vision/vision_bu
 
 /* ───────── 설정 ───────── */
 const CFG = {
-  drawMax: 8,       // 몸짓 단계 최대 길이(초)
+  drawMin: 6,       // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
+  drawMax: 12,      // 몸짓 단계 최대 길이(초)
   rise: 4.5,        // 비상 단계
   cover: 3.5,       // 덮임 단계
   enterHold: 0.6,   // 이 시간 이상 서 있으면 시작
@@ -56,6 +57,8 @@ const CFG = {
   absentLimit: 2.5, // 사람이 사라지면 이 시간 후 마무리
   doneHold: 0.35,   // 완성도 도달 후 비상까지
   completeProgress: 0.7,
+  slotHold: 1.8,    // 잠깐 가려져도 기존 참가자 자리를 유지
+  minTorsoFrac: 0.11, minShoulderFrac: 0.06, // 먼 배경의 작은 사람 제외
   figure: 0.17,     // 화면 높이 대비 몸통 길이
 };
 const FONT = '"Pretendard","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif';
@@ -386,7 +389,7 @@ async function init() {
     const files = await FilesetResolver.forVisionTasks('./vendor/tasks-vision/wasm');
     const make = delegate => PoseLandmarker.createFromOptions(files, {
       baseOptions: { modelAssetPath: './models/pose_landmarker_lite.task', delegate },
-      runningMode: 'VIDEO', numPoses: 2, outputSegmentationMasks: true,
+      runningMode: 'VIDEO', numPoses: 4, outputSegmentationMasks: true,
       minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
     });
     try { landmarker = await make('GPU'); } catch (e) { console.warn('GPU 실패, CPU로 전환', e); landmarker = await make('CPU'); }
@@ -401,7 +404,7 @@ async function init() {
 const NAMES = { lSh: 11, rSh: 12, lEl: 13, rEl: 14, lWr: 15, rWr: 16, lHip: 23, rHip: 24, lKn: 25, rKn: 26, lAn: 27, rAn: 28 };
 const tracks = [newTrack(), newTrack()];
 function newTrack() {
-  return { sm: null, lastSeen: -99, firstSeen: 0, k: 0, ax: 0, ay: 0, s: 0, pts: null, head: null,
+  return { sm: null, lastSeen: -99, firstSeen: 0, anchorX: null, size: 0, k: 0, ax: 0, ay: 0, s: 0, pts: null, head: null,
     wMin: [999, 999], wMax: [-999, -999], legMax: 0, hasLegs: false, used: false, angelHead: null, angelS: 0 };
 }
 function resetProgress(tr) {
@@ -422,19 +425,40 @@ function ingest(list, masks = []) {
   const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
   const items = list
     .map((lm, i) => Object.assign(lm, { mask: masks[i] }))
-    // 어깨만 보여도 인식(가까이 서거나 골반이 화면 밖이어도 MediaPipe가 골반 위치를 추정해 줌)
     .filter(lm => [11, 12].every(i => vis({ v: lm[i].visibility }) > 0.5))
-    .map(lm => ({ lm, hx: 1 - (lm[23].x + lm[24].x) / 2 }))
-    .sort((a, b) => a.hx - b.hx);
+    .map(lm => {
+      const shX = (lm[11].x + lm[12].x) / 2, shY = (lm[11].y + lm[12].y) / 2;
+      const hipX = (lm[23].x + lm[24].x) / 2, hipY = (lm[23].y + lm[24].y) / 2;
+      const torso = Math.hypot(shX - hipX, shY - hipY), shoulder = Math.abs(lm[11].x - lm[12].x);
+      return { lm, hx: 1 - shX, torso, shoulder, size: Math.max(torso, shoulder * 1.5) };
+    })
+    .filter(it => Number.isFinite(it.hx) && (it.torso >= CFG.minTorsoFrac || it.shoulder >= CFG.minShoulderFrac));
   const assign = [null, null];
-  if (items.length >= 2) { assign[0] = items[0]; assign[1] = items[1]; }
-  else if (items.length === 1) {
-    const live = tracks.map(present);
-    // 한 명이면 이미 추적 중인 자리를 유지(가운데를 넘어가도 진행도가 끊기지 않게)
-    const slot = live[0] && !live[1] ? 0 : live[1] && !live[0] ? 1 : (items[0].hx < 0.5 ? 0 : 1);
-    assign[slot] = items[0];
+  const used = new Set();
+  const indexed = items.map((it, index) => ({ it, index }));
+  const inZone = (it, slot) => slot === 0 ? it.hx > 0.08 && it.hx < 0.48 : it.hx > 0.52 && it.hx < 0.92;
+  // 먼저 최근 참가자를 가까운 위치·비슷한 크기의 포즈와 연결한다.
+  for (let slot = 0; slot < 2; slot++) {
+    const tr = tracks[slot];
+    if (now - tr.lastSeen > CFG.slotHold || tr.anchorX === null) continue;
+    const match = indexed.filter(({ it, index }) => !used.has(index) && inZone(it, slot)
+      && Math.abs(it.hx - tr.anchorX) < 0.14
+      && it.size / tr.size > 0.55 && it.size / tr.size < 1.8)
+      .sort((a, b) => Math.abs(a.it.hx - tr.anchorX) - Math.abs(b.it.hx - tr.anchorX))[0];
+    if (match) { assign[slot] = match.it; used.add(match.index); }
   }
-  assign.forEach((it, i) => { if (it) updateTrack(tracks[i], it.lm, vw, vh); });
+  // 잠깐 안 보이는 자리는 예약하고, 빈 자리에는 해당 구역의 한 명만 새로 받는다.
+  for (let slot = 0; slot < 2; slot++) {
+    if (assign[slot] || now - tracks[slot].lastSeen <= CFG.slotHold) continue;
+    const match = indexed.filter(({ it, index }) => !used.has(index) && inZone(it, slot))
+      .sort((a, b) => Math.abs(a.it.hx - (slot ? 0.75 : 0.25)) - Math.abs(b.it.hx - (slot ? 0.75 : 0.25)))[0];
+    if (match) { assign[slot] = match.it; used.add(match.index); }
+  }
+  assign.forEach((it, i) => {
+    if (!it) return;
+    tracks[i].anchorX = it.hx; tracks[i].size = it.size;
+    updateTrack(tracks[i], it.lm, vw, vh);
+  });
 }
 
 function updateTrack(tr, lm, vw, vh) {
@@ -679,7 +703,7 @@ function updateState(dt) {
   } else if (state === 'draw') {
     live.forEach(stamp);
     const p = sessionProgress();
-    doneT = live.length && live.every(tr => trackProgress(tr) >= CFG.completeProgress) ? doneT + dt : 0;
+    doneT = st >= CFG.drawMin && live.length && live.every(tr => trackProgress(tr) >= CFG.completeProgress) ? doneT + dt : 0;
     absentT = live.length ? 0 : absentT + dt;
     if (doneT > CFG.doneHold) go('rise');
     else if (st > CFG.drawMax) go(tracks.some(tr => tr.angelHead) ? 'rise' : 'cover');
