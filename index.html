@@ -204,7 +204,7 @@ function newFlake(anywhere) {
 }
 
 /* ───────── 오디오 (첫 클릭/키 입력 또는 자동재생 허용 시) ───────── */
-let actx = null, masterGain = null, windGain = null, snowGain = null, musicGain = null, muted = false;
+let actx = null, masterGain = null, windGain = null, snowGain = null, musicGain = null, noiseBuffer = null, muted = false, lastSwish = 0;
 const music = new Audio('./assets/joy-to-the-world-piano.ogg');
 music.loop = true;
 function audioOn() {
@@ -222,6 +222,7 @@ function startWind() {
   masterGain.connect(actx.destination);
   const len = actx.sampleRate * 3, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  noiseBuffer = buf;
   const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
   const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 420; bp.Q.value = 0.6;
   windGain = actx.createGain(); windGain.gain.value = 0;
@@ -255,6 +256,18 @@ function chime() {
       o.connect(g).connect(masterGain); o.start(t); o.stop(t + 3);
     }
   });
+}
+function swish() {
+  if (now - lastSwish < 0.22 || muted || !actx || actx.state !== 'running' || !noiseBuffer) return;
+  lastSwish = now;
+  const t = actx.currentTime, src = actx.createBufferSource(), bp = actx.createBiquadFilter(), gain = actx.createGain();
+  src.buffer = noiseBuffer;
+  bp.type = 'bandpass'; bp.frequency.value = 850 + Math.random() * 350; bp.Q.value = 0.5;
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(0.085, t + 0.025);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
+  src.connect(bp).connect(gain).connect(masterGain);
+  src.start(t, Math.random() * 2.5, 0.2); src.stop(t + 0.2);
 }
 
 /* ───────── 포즈 인식 ───────── */
@@ -464,7 +477,7 @@ function ingest(list, masks = []) {
 function updateTrack(tr, lm, vw, vh) {
   const raw = lm.map(p => ({ x: (1 - p.x) * vw, y: p.y * vh, v: p.visibility ?? 1 }));
   const fresh = !present(tr) || !tr.sm;
-  if (fresh) { tr.sm = raw.map(p => ({ ...p })); tr.firstSeen = now; }
+  if (fresh) { tr.sm = raw.map(p => ({ ...p })); tr.firstSeen = now; tr.lastTips = null; }
   else tr.sm.forEach((p, i) => { const r = raw[i]; p.x += (r.x - p.x) * 0.6; p.y += (r.y - p.y) * 0.6; p.v += (r.v - p.v) * 0.5; });
   tr.lastSeen = now;
 
@@ -602,10 +615,32 @@ function bodyShape(c, P, s, col) {
   c.restore();
 }
 let imprintDirty = true;
+let sparkles = [];
+function addSparkles(x, y, count, spread) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2, speed = (22 + Math.random() * 55) * DPR;
+    sparkles.push({ x: x + (Math.random() - 0.5) * spread, y: y + (Math.random() - 0.5) * spread,
+      vx: Math.cos(a) * speed, vy: Math.sin(a) * speed - 18 * DPR,
+      age: 0, life: 0.4 + Math.random() * 0.45, r: (2 + Math.random() * 2) * DPR, star: Math.random() < 0.55 });
+  }
+  if (sparkles.length > 110) sparkles.splice(0, sparkles.length - 110);
+}
 function stamp(tr) {
   bodyShape(dent.getContext('2d'), tr.pts, tr.s, '#ffffff'); // dent = 눌린 모양 마스크
   tr.angelHead = { ...tr.pts.head };
   imprintDirty = true;
+  const tips = ['lWr', 'rWr', 'lAn', 'rAn'];
+  if (tr.lastTips && now - (tr.sparkAt || 0) > 0.08) {
+    let moved = false;
+    for (const n of tips) {
+      const p = tr.pts[n], prev = tr.lastTips[n];
+      if (vis(p) < 0.5 || !prev || Math.hypot(p.x - prev.x, p.y - prev.y) < tr.s * 0.035) continue;
+      addSparkles(p.x, p.y, 2, tr.s * 0.08);
+      moved = true;
+    }
+    if (moved) { tr.sparkAt = now; swish(); }
+  }
+  tr.lastTips = Object.fromEntries(tips.map(n => [n, { ...tr.pts[n] }]));
 }
 
 function clearImprint() {
@@ -690,13 +725,20 @@ function buildAngel() {
 let state = 'idle', st = 0, doneT = 0, absentT = 0, now = 0;
 function go(s) {
   state = s; st = 0;
-  if (s === 'draw') { tracks.forEach(resetProgress); doneT = 0; absentT = 0; clearImprint(); }
-  if (s === 'rise') { buildAngel(); chime(); }
+  if (s === 'draw') { tracks.forEach(tr => { resetProgress(tr); tr.lastTips = null; }); doneT = 0; absentT = 0; clearImprint(); }
+  if (s === 'rise') {
+    buildAngel(); chime();
+    for (const tr of tracks) if (tr.angelHead) {
+      for (const n of ['head', 'lWr', 'rWr', 'lAn', 'rAn']) {
+        const p = tr.pts?.[n]; if (p && vis(p) > 0.5) addSparkles(p.x, p.y, 5, tr.s * 0.35);
+      }
+    }
+  }
   if (s === 'cover') {
     const extraCount = Math.round(flakes.filter(f => !f.extra).length * 0.35);
     for (let i = 0; i < extraCount; i++) flakes.push({ ...newFlake(false), y: -Math.random() * H * 0.15, extra: true });
   }
-  if (s === 'idle') { clearImprint(); angel = null; flakes = flakes.filter(f => !f.extra); }
+  if (s === 'idle') { clearImprint(); angel = null; sparkles = []; flakes = flakes.filter(f => !f.extra); }
   setAudioLevels();
 }
 function sessionProgress() {
@@ -780,6 +822,22 @@ function render(dt) {
     ctx.drawImage(angel.sprite, 0, 0, W, H);
     ctx.restore();
   }
+
+  // 손발의 눈가루와 완성 순간의 작은 별빛
+  for (const p of sparkles) {
+    p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 34 * DPR * dt;
+    const a = Math.max(0, 1 - p.age / p.life), r = p.r * (0.6 + a * 0.4);
+    if (!a) continue;
+    ctx.strokeStyle = `rgba(177,119,57,${a * 0.8})`;
+    ctx.fillStyle = `rgba(255,226,160,${a * 0.9})`;
+    if (p.star) {
+      ctx.lineWidth = DPR; ctx.beginPath();
+      ctx.moveTo(p.x - r * 2, p.y); ctx.lineTo(p.x + r * 2, p.y);
+      ctx.moveTo(p.x, p.y - r * 2); ctx.lineTo(p.x, p.y + r * 2); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.65, 0, Math.PI * 2); ctx.fill();
+  }
+  if (sparkles.length) sparkles = sparkles.filter(p => p.age < p.life);
 
   // 손·발 빛 (몸짓이 잘 잡히고 있다는 피드백)
   if (state === 'idle' || state === 'draw') {
