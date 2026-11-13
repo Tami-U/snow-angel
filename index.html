@@ -209,14 +209,69 @@ function newFlake(anywhere) {
 
 /* ───────── 오디오 (첫 클릭/키 입력 또는 자동재생 허용 시) ───────── */
 let actx = null, masterGain = null, windGain = null, snowGain = null, musicGain = null, noiseBuffer = null, muted = false, lastSwish = 0;
-const music = new Audio('./assets/joy-to-the-world-piano.ogg');
-music.loop = true;
 function audioOn() {
   try {
-    if (!actx) { actx = new AudioContext(); startWind(); }
+    if (!actx) { actx = new AudioContext(); startWind(); startMusicBox(); }
     if (actx.state === 'suspended') actx.resume();
-    if (music.paused) music.play().catch(() => {});
   } catch (e) { /* 오디오 없음 */ }
+}
+
+/* ───────── 배경음악: 오르골 캐럴 (브라우저에서 직접 합성) ─────────
+   멜로디는 모두 퍼블릭 도메인 전래 캐럴. 녹음 파일이 아니라 음표를 오르골 음색으로 연주하므로
+   저작권 걱정이 없고 인터넷 없이 재생된다. 세 곡을 번갈아 반복한다. */
+const SONGS = [
+  { name: '고요한 밤', bpm: 72, score:
+    'G4:1.5 A4:.5 G4:1 E4:3 G4:1.5 A4:.5 G4:1 E4:3 D5:2 D5:1 B4:3 C5:2 C5:1 G4:3 ' +
+    'A4:2 A4:1 C5:1.5 B4:.5 A4:1 G4:1.5 A4:.5 G4:1 E4:3 A4:2 A4:1 C5:1.5 B4:.5 A4:1 G4:1.5 A4:.5 G4:1 E4:3 ' +
+    'D5:2 D5:1 F5:1.5 D5:.5 B4:1 C5:3 E5:3 C5:1.5 G4:.5 E4:1 G4:1.5 F4:.5 D4:1 C4:6' },
+  { name: '징글벨', bpm: 112, score:
+    'E4:1 E4:1 E4:2 E4:1 E4:1 E4:2 E4:1 G4:1 C4:1.5 D4:.5 E4:4 F4:1 F4:1 F4:1.5 F4:.5 F4:1 E4:1 E4:1 E4:.5 E4:.5 ' +
+    'E4:1 D4:1 D4:1 E4:1 D4:2 G4:2 E4:1 E4:1 E4:2 E4:1 E4:1 E4:2 E4:1 G4:1 C4:1.5 D4:.5 E4:4 ' +
+    'F4:1 F4:1 F4:1.5 F4:.5 F4:1 E4:1 E4:1 E4:.5 E4:.5 G4:1 G4:1 F4:1 D4:1 C4:4' },
+  { name: 'We Wish You a Merry Christmas', bpm: 108, score:
+    'G4:1 C5:1 C5:.5 D5:.5 C5:.5 B4:.5 A4:1 A4:1 A4:1 D5:1 D5:.5 E5:.5 D5:.5 C5:.5 B4:1 G4:1 G4:1 ' +
+    'E5:1 E5:.5 F5:.5 E5:.5 D5:.5 C5:1 A4:1 G4:.5 G4:.5 A4:1 D5:1 B4:1 C5:3' },
+];
+const MIDI = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+for (const s of SONGS) s.seq = s.score.trim().split(/\s+/).map(tok => {
+  const [n, beats] = tok.split(':');
+  return [12 * (+n[1] + 1) + MIDI[n[0]], +beats];
+});
+let boxSong = 0, boxIdx = 0, boxTime = 0, boxBus = null, boxVerb = null;
+function startMusicBox() {
+  boxBus = actx.createGain(); boxBus.connect(musicGain);
+  // 잔향: 오르골 특유의 맑게 퍼지는 울림
+  const len = actx.sampleRate * 2.6, ir = actx.createBuffer(2, len, actx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+  const conv = actx.createConvolver(); conv.buffer = ir;
+  boxVerb = actx.createGain(); boxVerb.gain.value = 0.35;
+  boxVerb.connect(conv).connect(musicGain);
+  boxTime = actx.currentTime + 0.8;
+  setInterval(scheduleMusicBox, 120);
+}
+function scheduleMusicBox() {
+  if (!actx || actx.state !== 'running') return;
+  if (boxTime < actx.currentTime) boxTime = actx.currentTime + 0.1; // 멈췄다 재개된 경우
+  while (boxTime < actx.currentTime + 0.5) {
+    const song = SONGS[boxSong];
+    if (boxIdx >= song.seq.length) { boxSong = (boxSong + 1) % SONGS.length; boxIdx = 0; boxTime += 2.5; continue; }
+    const [midi, beats] = song.seq[boxIdx++];
+    pluck(440 * Math.pow(2, (midi + 12 - 69) / 12), boxTime); // 한 옥타브 위 = 오르골 음역
+    boxTime += beats * 60 / song.bpm;
+  }
+}
+// 오르골 음색: 맑은 기본음 + 빨리 사라지는 금속성 배음
+function pluck(f, t) {
+  const out = actx.createGain();
+  out.gain.setValueAtTime(0.0001, t); out.gain.exponentialRampToValueAtTime(0.3, t + 0.004);
+  out.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+  out.connect(boxBus); out.connect(boxVerb);
+  for (const [mul, amp, dec] of [[1, 1, 2.4], [2, 0.3, 1.0], [3.01, 0.14, 0.45], [5.43, 0.07, 0.18]]) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'sine'; o.frequency.value = f * mul;
+    g.gain.setValueAtTime(amp, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
+    o.connect(g).connect(out); o.start(t); o.stop(t + dec + 0.05);
+  }
 }
 addEventListener('pointerdown', audioOn);
 addEventListener('keydown', audioOn);
@@ -235,7 +290,7 @@ function startWind() {
   snowGain = actx.createGain(); snowGain.gain.value = 0;
   src.connect(hp).connect(snowGain).connect(masterGain);
   musicGain = actx.createGain(); musicGain.gain.value = 0;
-  actx.createMediaElementSource(music).connect(musicGain).connect(masterGain);
+  musicGain.connect(masterGain);
   src.start();
   setAudioLevels();
 }
@@ -245,7 +300,7 @@ function setAudioLevels() {
   masterGain.gain.setTargetAtTime(muted ? 0 : 1, t, 0.1);
   windGain.gain.setTargetAtTime(0.018, t, 0.2);
   snowGain.gain.setTargetAtTime(state === 'cover' ? 0.035 : state === 'draw' ? 0.012 : 0, t, 0.25);
-  musicGain.gain.setTargetAtTime(state === 'rise' ? 0.07 : 0.14, t, 0.5);
+  musicGain.gain.setTargetAtTime(state === 'rise' ? 0.22 : 0.45, t, 0.5); // 비상 때는 차임이 들리게 낮춤
 }
 function chime() {
   if (muted || !actx || actx.state !== 'running') return;

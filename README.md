@@ -15,18 +15,18 @@
 - 몸통 길이를 측정해 자국을 화면 높이에 맞는 일정한 크기로 그립니다. 관객이 카메라에 가까워지거나 멀어져도 자국 크기가 급격히 변하지 않습니다.
 - 영상은 저장하지 않고 브라우저 안에서 실시간으로만 처리합니다.
 - Web Audio API가 바람 소리, 몸짓 중 눈 쓸리는 소리, 덮임 소리, 비상할 때의 차임을 브라우저에서 만듭니다.
-- 배경음악은 피아노 캐롤 **Joy to the World**를 반복 재생합니다. 비상 단계에서는 차임이 들리도록 음악 볼륨을 낮춥니다.
+- 배경음악은 **오르골 캐롤** 세 곡(고요한 밤 → 징글벨 → We Wish You a Merry Christmas)을 번갈아 반복합니다. 비상 단계에서는 차임이 들리도록 음악 볼륨을 낮춥니다.
 
 ## 기술
 
 - [MediaPipe Pose Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (`@mediapipe/tasks-vision` 0.10.18, `pose_landmarker_lite` 모델)
 - 런타임(`vendor/`)과 모델(`models/`)을 레포에 포함해 **인터넷 없이** 동작합니다.
 - 빌드 과정 없이 로컬 서버에서 `index.html`을 실행합니다.
-- 배경음악 파일은 `assets/joy-to-the-world-piano.ogg`에 포함되어 오프라인에서도 재생됩니다.
+### 배경음악
 
-### 배경음악 출처
-
-- [Joy to the World (piano)](https://commons.wikimedia.org/wiki/File:Joy_to_the_World_(piano).ogg), 연주·녹음: Wikimedia Commons 사용자 Orthologist. 권리자가 전 세계 퍼블릭 도메인으로 공개한 음원입니다.
+- 녹음 파일 없이 Web Audio API로 오르골 음색(맑은 기본음 + 빠르게 사라지는 금속성 배음 + 잔향)을 직접 합성해 연주합니다.
+- 멜로디는 모두 퍼블릭 도메인 전래 캐럴이라 저작권 걱정이 없고, 인터넷 없이 재생됩니다.
+- 곡·템포는 `index.html`의 `SONGS`에서 바꿀 수 있습니다(`음이름옥타브:박자` 형식, 예: `G4:1.5`).
 
 ## 공유 링크
 
