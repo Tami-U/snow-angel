@@ -971,7 +971,7 @@ function drawText() {
   }
 }
 
-/* ───────── 운영자용: D 디버그, F 전체화면, R 초기화, M 소리 ───────── */
+/* ───────── 운영자용: D 디버그, F 전체화면, R 초기화, M 소리, ESC×2 종료 ───────── */
 let debug = false, fps = 60;
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
@@ -980,7 +980,19 @@ addEventListener('keydown', e => {
   if (k === 'r' && !e.repeat) resetExhibit();
   if (k === 'c') nextCamera();
   if (k === 'm') { muted = !muted; setAudioLevels(); showToast(muted ? '소리 꺼짐' : '소리 켜짐'); }
+  // ESC 두 번: 전시 끄기 (관객이 실수로 한 번 눌러도 꺼지지 않게)
+  if (e.key === 'Escape' && !e.repeat) {
+    if (now - escAt < 2.5) closeExhibit();
+    else { escAt = now; showToast('ESC를 한 번 더 누르면 전시가 꺼져요'); }
+  }
 });
+let escAt = -99;
+async function closeExhibit() {
+  showToast('전시를 종료합니다');
+  // '전시 시작.exe'로 켠 경우: 런처에게 종료 요청(크롬+서버 정리). 그 외에는 창만 닫기 시도
+  try { await fetch('./__shutdown', { method: 'POST' }); } catch (e) { /* 런처 없음 */ }
+  setTimeout(() => window.close(), 400);
+}
 function drawDebug() {
   const w = 320 * DPR, h = video.videoHeight ? w * video.videoHeight / video.videoWidth : w * 9 / 16, x = W - w - 16 * DPR, y = 80 * DPR;
   if (video.readyState >= 2) { ctx.save(); ctx.translate(x + w, y); ctx.scale(-1, 1); ctx.drawImage(video, 0, 0, w, h); ctx.restore(); }

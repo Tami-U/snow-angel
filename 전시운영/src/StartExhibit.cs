@@ -124,6 +124,24 @@ static class StartExhibit
         try
         {
             string rel = Uri.UnescapeDataString(ctx.Request.Url.AbsolutePath).TrimStart('/').Replace('/', '\\');
+
+            // 전시 화면에서 ESC 두 번 → 종료 요청. 이 전시 페이지에서 온 요청만 받는다.
+            if (rel == "__shutdown")
+            {
+                string origin = ctx.Request.Headers["Origin"];
+                bool sameOrigin = origin == null || origin == ("http://localhost:" + ctx.Request.Url.Port);
+                if (ctx.Request.HttpMethod != "POST" || !ctx.Request.IsLocal || !sameOrigin) { res.StatusCode = 403; return; }
+                res.StatusCode = 200;
+                ThreadPool.QueueUserWorkItem(delegate (object _)
+                {
+                    Thread.Sleep(300); // 응답이 먼저 나가도록
+                    Kiosk.StopAll();
+                    try { File.Delete(Kiosk.PidFile); } catch { }
+                    Environment.Exit(0);
+                });
+                return;
+            }
+
             if (rel == "") rel = "index.html";
             string file = Path.GetFullPath(Path.Combine(root, rel));
             if (!file.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(file)) { res.StatusCode = 404; return; }
