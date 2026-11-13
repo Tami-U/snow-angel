@@ -639,6 +639,16 @@ function updateCutout(tr, mask, vw, vh) {
   c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, cw, ch);
   c.save(); c.translate(cw, 0); c.scale(-1, 1); c.drawImage(video, 0, 0, cw, ch); c.restore();
   c.globalCompositeOperation = 'destination-in'; c.drawImage(maskScratch, 0, 0);
+  // 카메라 화면 가장자리에서 몸이 칼같이 잘리지 않게 테두리를 부드럽게 지운다
+  c.globalCompositeOperation = 'destination-out';
+  const fx = cw * 0.06, fy = ch * 0.08;
+  for (const [x0, y0, x1, y1, rx, ry, rw, rh] of [
+    [0, 0, fx, 0, 0, 0, fx, ch], [cw, 0, cw - fx, 0, cw - fx, 0, fx, ch],
+    [0, 0, 0, fy, 0, 0, cw, fy], [0, ch, 0, ch - fy, 0, ch - fy, cw, fy]]) {
+    const g = c.createLinearGradient(x0, y0, x1, y1);
+    g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = g; c.fillRect(rx, ry, rw, rh);
+  }
   c.globalCompositeOperation = 'source-over';
   tr.hasCut = true;
 }
