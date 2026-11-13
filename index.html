@@ -496,6 +496,19 @@ function ingest(list, masks = []) {
   });
 }
 
+// One Euro 필터: 떨림(느린 변화)은 강하게 누르고, 빠른 움직임은 지연 없이 따라간다
+function oneEuro(minCutoff = 1, beta = 0, dCutoff = 1) {
+  let x = null, dx = 0, lastT = null;
+  const alpha = (cutoff, dt) => 1 / (1 + 1 / (2 * Math.PI * cutoff * dt));
+  return (v, t) => {
+    if (x === null || lastT === null || t <= lastT) { x = v; lastT = t; dx = 0; return x; }
+    const dt = Math.min(0.2, t - lastT); lastT = t;
+    dx += alpha(dCutoff, dt) * ((v - x) / dt - dx);
+    x += alpha(minCutoff + beta * Math.abs(dx), dt) * (v - x);
+    return x;
+  };
+}
+
 // 카메라 좌표(S) → 화면 위 몸 그림 좌표
 function figurePoints(S, hip, k, ax, ay, s) {
   const P = {};
@@ -515,15 +528,16 @@ function updateTrack(tr, lm, vw, vh) {
   tr.poseVersion = (tr.poseVersion || 0) + 1;
 
   const S = tr.sm;
-  const hip = mid(S[23], S[24]), sh = mid(S[11], S[12]);
-  const torso = Math.max(Math.hypot(sh.x - hip.x, sh.y - hip.y), vh * 0.08);
-  // 몸통은 각자의 눈밭 중앙에 두고, 팔다리가 화면 밖으로 커지지 않게 크기를 제한한다.
-  const visible = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
-    .map(i => S[i]).filter(p => p.v > 0.35 && Number.isFinite(p.x) && Number.isFinite(p.y));
-  const maxDx = Math.max(1, ...visible.map(p => Math.abs(p.x - hip.x)));
-  const maxDy = Math.max(1, ...visible.map(p => Math.abs(p.y - hip.y)));
-  const targetK = Math.min(H * CFG.figure / torso, W * 0.16 / maxDx, H * 0.29 / maxDy);
-  tr.k = fresh ? targetK : tr.k + (targetK - tr.k) * 0.25;
+  const rawHip = mid(S[23], S[24]), sh = mid(S[11], S[12]);
+  const torso = Math.max(Math.hypot(sh.x - rawHip.x, sh.y - rawHip.y), vh * 0.08);
+  // 흔들림 방지: 기준점(골반)과 크기를 One Euro 필터로 안정화 — 가만히 있으면 단단히 고정, 움직이면 빠르게 따라감.
+  // 크기는 몸통 길이로만 정한다(팔을 뻗을 때마다 몸 전체가 커졌다 작아지던 문제 해결).
+  if (fresh || !tr.fHip) {
+    tr.fHipX = oneEuro(0.6, 0.004); tr.fHipY = oneEuro(0.6, 0.004); tr.fK = oneEuro(0.25, 0);
+    tr.fHip = true;
+  }
+  const hip = { x: tr.fHipX(rawHip.x, now), y: tr.fHipY(rawHip.y, now) };
+  tr.k = tr.fK(H * CFG.figure / torso, now);
   tr.s = torso * tr.k;
   // 혼자면 화면 가운데, 둘이면 왼쪽/오른쪽.
   // 몸짓~비상 동안은 사람마다 시작할 때 정한 자리를 유지(자국이 미끄러지지 않게).
