@@ -49,6 +49,7 @@ import { PoseLandmarker, FilesetResolver } from './vendor/tasks-vision/vision_bu
 /* ───────── 설정 ───────── */
 const CFG = {
   drawMin: 8,       // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
+  reloadAfterHours: 3, // 메모리 누적 방지: 이 시간이 지나면 빈 대기 화면에서 자동 새로고침
   drawMax: 20,      // 몸짓 단계 최대 길이(초)
   rise: 4.5,        // 비상 단계
   cover: 3.5,       // 덮임 단계
@@ -400,6 +401,8 @@ function demoPose(t, cx) {
 
 async function init() {
   keepAwake();
+  muted = store.get('snow-angel-muted') === '1'; // 자동 새로고침 후에도 소리 끔 상태 유지
+  setAudioLevels();
   if (DEMO) { status = ''; return; }
   try {
     await chooseCamera();
@@ -460,12 +463,17 @@ function ingest(list, masks = []) {
   const assign = [null, null];
   const used = new Set();
   const indexed = items.map((it, index) => ({ it, index }));
-  const inZone = (it, slot) => slot === 0 ? it.hx > 0.08 && it.hx < 0.48 : it.hx > 0.52 && it.hx < 0.92;
+  // 왼쪽/오른쪽 자리를 가운데(0.5)에서 빈틈없이 나눈다 — 혼자 온 관객이 정중앙에 서도 인식되게.
+  // 이미 참여 중인 사람은 가운데를 조금 넘어가도(±0.1) 같은 자리로 유지해 진행도가 끊기지 않게 한다.
+  const inZone = (it, slot, keep = false) => {
+    const m = keep ? 0.1 : 0;
+    return slot === 0 ? it.hx > 0.04 && it.hx < 0.5 + m : it.hx >= 0.5 - m && it.hx < 0.96;
+  };
   // 먼저 최근 참가자를 가까운 위치·비슷한 크기의 포즈와 연결한다.
   for (let slot = 0; slot < 2; slot++) {
     const tr = tracks[slot];
     if (now - tr.lastSeen > CFG.slotHold || tr.anchorX === null) continue;
-    const match = indexed.filter(({ it, index }) => !used.has(index) && inZone(it, slot)
+    const match = indexed.filter(({ it, index }) => !used.has(index) && inZone(it, slot, true)
       && Math.abs(it.hx - tr.anchorX) < 0.14
       && it.size / tr.size > 0.55 && it.size / tr.size < 1.8)
       .sort((a, b) => Math.abs(a.it.hx - tr.anchorX) - Math.abs(b.it.hx - tr.anchorX))[0];
@@ -483,6 +491,16 @@ function ingest(list, masks = []) {
     tracks[i].anchorX = it.hx; tracks[i].size = it.size;
     updateTrack(tracks[i], it.lm, vw, vh);
   });
+}
+
+// 카메라 좌표(S) → 화면 위 몸 그림 좌표
+function figurePoints(S, hip, k, ax, ay, s) {
+  const P = {};
+  for (const [n, i] of Object.entries(NAMES)) P[n] = { x: ax + (S[i].x - hip.x) * k, y: ay + (S[i].y - hip.y) * k, v: S[i].v };
+  P.shM = mid(P.lSh, P.rSh); P.hipM = mid(P.lHip, P.rHip);
+  const ux = P.shM.x - P.hipM.x, uy = P.shM.y - P.hipM.y, ul = Math.hypot(ux, uy) || 1;
+  P.head = { x: P.shM.x + ux / ul * s * 0.5, y: P.shM.y + uy / ul * s * 0.5 };
+  return P;
 }
 
 function updateTrack(tr, lm, vw, vh) {
@@ -504,7 +522,11 @@ function updateTrack(tr, lm, vw, vh) {
   const targetK = Math.min(H * CFG.figure / torso, W * 0.16 / maxDx, H * 0.29 / maxDy);
   tr.k = fresh ? targetK : tr.k + (targetK - tr.k) * 0.25;
   tr.s = torso * tr.k;
-  tr.ax = W * (tracks.indexOf(tr) === 0 ? 0.28 : 0.72);
+  // 혼자면 화면 가운데, 둘이면 왼쪽/오른쪽. 몸짓 중에는 시작할 때 정한 배치를 유지(자국이 미끄러지지 않게)
+  const other = tracks[1 - tracks.indexOf(tr)];
+  const solo = state === 'draw' ? soloLayout : now - other.lastSeen > CFG.slotHold;
+  const axTarget = W * (solo ? 0.5 : tracks.indexOf(tr) === 0 ? 0.28 : 0.72);
+  tr.ax = fresh || state === 'draw' ? axTarget : tr.ax + (axTarget - tr.ax) * 0.15;
   if (tr.groundHipY === null) { tr.groundHipY = hip.y; tr.groundShY = sh.y; }
   const rise = Math.min(tr.groundHipY - hip.y, tr.groundShY - sh.y);
   if (rise < torso * 0.06) {
@@ -525,12 +547,7 @@ function updateTrack(tr, lm, vw, vh) {
   if (lm.mask) { try { updateCutout(tr, lm.mask, vw, vh); } catch (e) { console.warn(e); tr.hasCut = false; } }
   else tr.hasCut = false;
 
-  const P = {};
-  for (const [n, i] of Object.entries(NAMES)) P[n] = { x: tr.ax + (S[i].x - hip.x) * tr.k, y: tr.ay + (S[i].y - hip.y) * tr.k, v: S[i].v };
-  P.shM = mid(P.lSh, P.rSh); P.hipM = mid(P.lHip, P.rHip);
-  const ux = P.shM.x - P.hipM.x, uy = P.shM.y - P.hipM.y, ul = Math.hypot(ux, uy) || 1;
-  P.head = { x: P.shM.x + ux / ul * tr.s * 0.5, y: P.shM.y + uy / ul * tr.s * 0.5 };
-  tr.pts = P;
+  tr.pts = figurePoints(S, hip, tr.k, tr.ax, tr.ay, tr.s);
 
   if (state !== 'draw') return;
   // 진행도: 팔을 휘저은 각도 범위 + 다리를 벌린 정도
@@ -774,10 +791,123 @@ function buildAngel() {
 }
 
 /* ───────── 상태 흐름: 눈 → 몸짓 → 비상 → 덮임 ───────── */
-let state = 'idle', st = 0, doneT = 0, absentT = 0, now = 0;
+/* ───────── 대기 화면 안내 연출: 아무도 없으면 가상의 천사가 그려지는 시범 ───────── */
+const ATTRACT = { delay: 4, period: 7, drawEnd: 5 };
+const attractMask = mk(1, 1), attractTint = mk(1, 1), attractGhost = mk(1, 1);
+let attractT = -1;
+function demoFigure(t) {
+  const S = demoPose(t, 0.5).map(p => ({ x: (1 - p.x) * 1280, y: p.y * 720, v: p.visibility }));
+  const hip = mid(S[23], S[24]), sh = mid(S[11], S[12]);
+  const torso = Math.max(Math.hypot(sh.x - hip.x, sh.y - hip.y), 1), k = H * CFG.figure / torso;
+  return { pts: figurePoints(S, hip, k, W / 2, H * 0.59, torso * k), s: torso * k };
+}
+function drawAttract(dt) {
+  const empty = state === 'idle' && !status && tracks.every(tr => now - tr.lastSeen > ATTRACT.delay);
+  const clearMask = () => attractMask.getContext('2d').clearRect(0, 0, attractMask.width, attractMask.height);
+  if (!empty) { if (attractT >= 0) { attractT = -1; clearMask(); } return; }
+  for (const c of [attractMask, attractTint, attractGhost]) if (c.width !== dent.width || c.height !== dent.height) { c.width = dent.width; c.height = dent.height; }
+  attractT = attractT < 0 ? 0 : attractT + dt;
+  if (attractT > ATTRACT.period) { attractT = 0; clearMask(); }
+  const t = attractT, a = Math.min(clamp(t / 0.6, 0, 1), clamp((ATTRACT.period - t) / 0.8, 0, 1));
+  const F = demoFigure(t);
+  if (t < ATTRACT.drawEnd) bodyShape(attractMask.getContext('2d'), F.pts, F.s, '#ffffff');
+
+  // 쌓이는 자국 → 끝에 금빛으로
+  const g = attractTint.getContext('2d'), gp = clamp((t - ATTRACT.drawEnd) / 0.8, 0, 1);
+  g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, attractTint.width, attractTint.height);
+  g.drawImage(attractMask, 0, 0);
+  g.globalCompositeOperation = 'source-in';
+  g.fillStyle = `rgb(${(180 + 66 * gp) | 0},${(199 + 3 * gp) | 0},${(226 - 108 * gp) | 0})`;
+  g.fillRect(0, 0, attractTint.width, attractTint.height);
+  g.globalCompositeOperation = 'source-over';
+  ctx.save();
+  ctx.globalAlpha = a * 0.7; ctx.drawImage(attractTint, 0, 0, W, H);
+  // 시범을 보이는 반투명 사람
+  const ga = a * 0.22 * clamp((ATTRACT.drawEnd + 0.3 - t) / 0.4, 0, 1);
+  if (ga > 0.01) {
+    const gh = attractGhost.getContext('2d');
+    gh.clearRect(0, 0, attractGhost.width, attractGhost.height);
+    bodyShape(gh, F.pts, F.s, '#6f8db9');
+    ctx.globalAlpha = ga; ctx.drawImage(attractGhost, 0, 0, W, H);
+  }
+  ctx.restore();
+  const u = Math.min(W / DPR / 1920, H / DPR / 1080);
+  text(t < ATTRACT.drawEnd ? '이렇게 팔과 다리를 크게 저어 보세요' : '눈 위에 천사가 완성돼요', W / 2, H * 0.9, 26 * u, 600, a * 0.9);
+}
+
+/* ───────── 체험자 집계: 숫자만 이 PC(브라우저)에 저장 — 영상·사진 없음 ───────── */
+const STATS_KEY = 'snow-angel-stats';
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+let stats = (() => { try { return JSON.parse(store.get(STATS_KEY)) || { days: {} }; } catch { return { days: {} }; } })();
+let showStats = false;
+function recordSession(completed, seconds) {
+  if (DEMO) return;
+  const people = tracks.filter(tr => tr.used).length;
+  if (!people) return;
+  const d = stats.days[dayKey()] ||= { sessions: 0, people: 0, completed: 0, solo: 0, duo: 0, seconds: 0, hours: Array(24).fill(0) };
+  d.sessions++; d.people += people; d.seconds += seconds;
+  if (completed) d.completed++;
+  if (people === 1) d.solo++; else d.duo++;
+  d.hours[new Date().getHours()] += people;
+  store.set(STATS_KEY, JSON.stringify(stats));
+}
+function sumDays(list) {
+  return list.reduce((a, d) => ({ sessions: a.sessions + d.sessions, people: a.people + d.people, completed: a.completed + d.completed,
+    solo: a.solo + d.solo, duo: a.duo + d.duo, seconds: a.seconds + d.seconds }), { sessions: 0, people: 0, completed: 0, solo: 0, duo: 0, seconds: 0 });
+}
+function exportStats() {
+  const rows = [['날짜', '체험 횟수', '체험 인원', '완성 횟수', '완성률(%)', '1인', '2인', '평균 체험 시간(초)', ...Array.from({ length: 24 }, (_, h) => `${h}시 인원`)]];
+  for (const [day, d] of Object.entries(stats.days).sort()) {
+    rows.push([day, d.sessions, d.people, d.completed, d.sessions ? Math.round(d.completed / d.sessions * 100) : 0,
+      d.solo, d.duo, d.sessions ? Math.round(d.seconds / d.sessions) : 0, ...d.hours]);
+  }
+  const csv = '﻿' + rows.map(r => r.join(',')).join('\r\n'); // 엑셀에서 한글이 깨지지 않게 BOM
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `snow-angel-집계-${dayKey()}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  showToast('집계 파일을 다운로드 폴더에 저장했어요');
+}
+function drawStats() {
+  const u = Math.min(W / DPR / 1920, H / DPR / 1080) * DPR;
+  const today = stats.days[dayKey()] || { sessions: 0, people: 0, completed: 0, solo: 0, duo: 0, seconds: 0, hours: Array(24).fill(0) };
+  const days = Object.keys(stats.days).sort(), all = sumDays(Object.values(stats.days));
+  const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+  const avg = d => d.sessions ? Math.round(d.seconds / d.sessions) : 0;
+  const peak = today.hours.reduce((m, v, h) => v > m.v ? { h, v } : m, { h: -1, v: 0 });
+  const recent = days.slice(-7).reverse().map(k => `${k.slice(5)}  ${stats.days[k].people}명 / ${stats.days[k].sessions}회`);
+  const lines = [
+    ['h', '체험 집계  ·  이 PC 기준'],
+    ['s', `오늘 (${dayKey()})`],
+    ['b', `체험 인원 ${today.people}명   ·   체험 횟수 ${today.sessions}회   ·   완성률 ${pct(today.completed, today.sessions)}%`],
+    ['b', `1인 ${today.solo}회 / 2인 ${today.duo}회   ·   평균 ${avg(today)}초   ·   가장 붐빈 시간 ${peak.h < 0 ? '-' : `${peak.h}시 (${peak.v}명)`}`],
+    ['s', `누적 (${days[0] || dayKey()} ~)`],
+    ['b', `체험 인원 ${all.people}명   ·   체험 횟수 ${all.sessions}회   ·   완성률 ${pct(all.completed, all.sessions)}%   ·   운영 ${days.length}일`],
+    ['s', '최근 7일'],
+    ...(recent.length ? recent : ['아직 기록이 없어요']).map(t => ['b', t]),
+    ['f', 'S  엑셀(CSV)로 저장      I  닫기'],
+  ];
+  const lh = 40 * u, pw = 980 * u, ph = lines.length * lh + 60 * u, px = (W - pw) / 2, py = (H - ph) / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(20,34,60,0.35)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(250,252,255,0.97)'; ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 18 * u); ctx.fill();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  lines.forEach(([kind, str], i) => {
+    const y = py + 30 * u + lh * (i + 0.5);
+    ctx.font = `${kind === 'h' ? 700 : kind === 's' ? 700 : 500} ${(kind === 'h' ? 30 : kind === 'f' ? 18 : kind === 's' ? 20 : 22) * u}px ${FONT}`;
+    ctx.fillStyle = kind === 's' ? '#5b7fa8' : kind === 'f' ? '#7b8da6' : '#1c3054';
+    ctx.fillText(str, px + 44 * u, y);
+  });
+  ctx.restore();
+}
+
+let state = 'idle', st = 0, doneT = 0, absentT = 0, now = 0, soloLayout = true;
 function go(s) {
+  // 몸짓 단계가 끝날 때 1회 체험으로 집계(천사 완성 → rise, 미완성 → cover). R 리셋으로 끊긴 건 제외
+  if (state === 'draw' && (s === 'rise' || s === 'cover')) recordSession(s === 'rise', Math.round(st));
   state = s; st = 0;
-  if (s === 'draw') { tracks.forEach(tr => { resetProgress(tr); tr.lastTips = null; tr.lastStampY = null; tr.lastSprayJumpY = 0; tr.stampedVersion = 0; }); doneT = 0; absentT = 0; clearImprint(); }
+  if (s === 'draw') { soloLayout = tracks.filter(present).length <= 1; tracks.forEach(tr => { resetProgress(tr); tr.lastTips = null; tr.lastStampY = null; tr.lastSprayJumpY = 0; tr.stampedVersion = 0; }); doneT = 0; absentT = 0; clearImprint(); }
   if (s === 'rise') {
     buildAngel(); chime();
     for (const tr of tracks) if (tr.angelHead) {
@@ -803,6 +933,9 @@ function updateState(dt) {
   const live = tracks.filter(present);
   if (state === 'idle') {
     if (st > CFG.idleCooldown && live.some(tr => now - tr.firstSeen > CFG.enterHold)) go('draw');
+    // 장시간 운영 안정성: 3시간 넘게 켜져 있으면, 아무도 없는 대기 화면에서 10초 지났을 때 조용히 새로고침
+    else if (!DEMO && performance.now() > CFG.reloadAfterHours * 3600e3 && st > 10
+      && tracks.every(tr => now - tr.lastSeen > 10)) location.reload();
   } else if (state === 'draw') {
     live.forEach(tr => { if (tr.poseVersion !== tr.stampedVersion) { stamp(tr); tr.stampedVersion = tr.poseVersion; } });
     const p = sessionProgress();
@@ -862,6 +995,7 @@ function render(dt) {
   }
 
   // 감지된 사람은 아래쪽 개별 카드에 표시
+  drawAttract(dt);
   drawPersonCards();
 
   // 비상
@@ -922,7 +1056,13 @@ function render(dt) {
   if (flakes.some(f => f.dead)) flakes = flakes.filter(f => !f.dead);
 
   drawText();
+  // 카메라 안내(항상): 공공장소 촬영 고지
+  {
+    const u = Math.min(W / DPR / 1920, H / DPR / 1080);
+    text('카메라 영상은 저장되지 않으며, 체험 중에만 실시간으로 처리됩니다', W / 2, H * 0.975, 15 * u, 500, 0.6);
+  }
   if (debug) drawDebug();
+  if (showStats) drawStats();
   if (toastT > 0) {
     toastT -= dt;
     const u = Math.min(W / DPR / 1920, H / DPR / 1080);
@@ -956,7 +1096,7 @@ function drawText() {
     const a = clamp(st / 1.2, 0, 1);
     text('CHRISTMAS SEASON  /  SNOW ANGEL', cx, H * 0.037, 17 * u, 600, 0.7 * a, 4 * u);
     text('스노우 엔젤', cx, H * 0.09, 58 * u, 700, a);
-    text('왼쪽 또는 오른쪽 자리에 서서 팔을 크게 움직여 보세요', cx, H * 0.15, 27 * u, 500, 0.9 * a);
+    text('표시된 자리에 서서 팔을 크게 움직여 보세요', cx, H * 0.15, 27 * u, 500, 0.9 * a);
   } else if (state === 'draw') {
     const p = sessionProgress();
     text(p < 0.5 ? '움직일 때마다 눈 위에 자국이 남아요' : '좋아요, 눈 위에 천사가 그려지고 있어요', cx, H * 0.07, 33 * u, 700);
@@ -979,7 +1119,9 @@ addEventListener('keydown', e => {
   if (k === 'f') (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
   if (k === 'r' && !e.repeat) resetExhibit();
   if (k === 'c') nextCamera();
-  if (k === 'm') { muted = !muted; setAudioLevels(); showToast(muted ? '소리 꺼짐' : '소리 켜짐'); }
+  if (k === 'i' && !e.repeat) showStats = !showStats;
+  if (k === 's' && showStats && !e.repeat) exportStats();
+  if (k === 'm') { muted = !muted; store.set('snow-angel-muted', muted ? '1' : '0'); setAudioLevels(); showToast(muted ? '소리 꺼짐' : '소리 켜짐'); }
   // ESC 두 번: 전시 끄기 (관객이 실수로 한 번 눌러도 꺼지지 않게)
   if (e.key === 'Escape' && !e.repeat) {
     if (now - escAt < 2.5) closeExhibit();
@@ -1023,7 +1165,8 @@ function frame(ts) {
     status = '카메라 화면이 멈췄어요. 다시 연결 중…';
     scheduleCameraRetry();
   }
-  if (DEMO) ingest(DEMO_MODE === 'solo' || DEMO_MODE === 'jump'
+  // ?demo=attract: 아무도 없는 대기 화면(안내 연출) 확인용
+  if (DEMO && DEMO_MODE !== 'attract') ingest(DEMO_MODE === 'solo' || DEMO_MODE === 'jump'
     ? [demoPose(now, 0.33)] : [demoPose(now, 0.33), demoPose(now + 0.7, 0.67)]);
   updateState(dt);
   render(dt);
