@@ -1085,7 +1085,7 @@ function render(dt) {
     const p = clamp(st / CFG.rise, 0, 1), e = ease(p);
     const dy = -e * H * 0.16, sc = 1 + e * 0.015;
     const a = p < 0.18 ? p / 0.18 : p > 0.7 ? (1 - p) / 0.3 : 1;
-    ctx.save(); ctx.globalAlpha = 0.92 * a;
+    ctx.save(); ctx.globalAlpha = 0.8 * a; // 승천하는 천사를 살짝 투명하게
     ctx.translate(W / 2, H / 2 + dy); ctx.scale(sc, sc); ctx.translate(-W / 2, -H / 2);
     ctx.drawImage(angel.sprite, 0, 0, W, H);
     ctx.restore();
