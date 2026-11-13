@@ -44,7 +44,7 @@
 </div>
 
 <script type="module">
-import { PoseLandmarker, FilesetResolver } from './vendor/tasks-vision/vision_bundle.mjs';
+import { PoseLandmarker, FilesetResolver, DrawingUtils } from './vendor/tasks-vision/vision_bundle.mjs';
 
 /* ───────── 설정 ───────── */
 const CFG = {
@@ -414,11 +414,14 @@ async function init() {
   try {
     const files = await FilesetResolver.forVisionTasks('./vendor/tasks-vision/wasm');
     const make = delegate => PoseLandmarker.createFromOptions(files, {
+      canvas: mpCanvas, // 마스크를 같은 WebGL 컨텍스트에서 바로 그리기 위해 공유
       baseOptions: { modelAssetPath: './models/pose_landmarker_lite.task', delegate },
       runningMode: 'VIDEO', numPoses: 2, outputSegmentationMasks: true,
       minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
     });
     try { landmarker = await make('GPU'); } catch (e) { console.warn('GPU 실패, CPU로 전환', e); landmarker = await make('CPU'); }
+    try { maskDrawer = new DrawingUtils(maskCtx, mpCanvas.getContext('webgl2')); }
+    catch (e) { console.warn('GPU 마스크 그리기 불가, 숫자 읽기 방식 사용', e); maskDrawer = null; }
     if (video.srcObject?.getVideoTracks()[0]?.readyState === 'live') status = '';
   } catch (e) {
     console.error(e); status = '포즈 인식 모델을 불러오지 못했어요.';
@@ -567,26 +570,41 @@ function updateTrack(tr, lm, vw, vh) {
 
 /* ───────── 사람 누끼: 배경을 지우고 하단 미리보기에 표시 ───────── */
 const CUT = 0.4; // 누끼 해상도(카메라 대비) — 하단 카드(240×300)에 충분한 크기
-function updateCutout(tr, mask, vw, vh) {
-  const cw = Math.round(vw * CUT), ch = Math.round(vh * CUT);
-  if (!tr.cut || tr.cut.width !== cw || tr.cut.height !== ch) {
-    tr.cut = mk(cw, ch); tr.mcv = mk(cw, ch);
-    tr.mimg = tr.mcv.getContext('2d').createImageData(cw, ch);
-    tr.mimg.data.fill(255);
+// 마스크(사람일 확률)를 GPU에서 바로 그림으로 그린다.
+// 일부 그래픽 드라이버는 마스크를 숫자 배열로 읽어오는 것(getAsFloat32Array → readPixels FLOAT)을 막아서
+// 사람이 통째로 투명해지므로, MediaPipe의 DrawingUtils로 같은 WebGL 컨텍스트에서 그린 결과를 사용한다.
+const mpCanvas = document.createElement('canvas');
+const maskScratch = mk(1, 1), maskCtx = maskScratch.getContext('2d');
+let maskDrawer = null, maskImg = null;
+function drawMaskInto(mask, cw, ch) {
+  if (maskScratch.width !== cw || maskScratch.height !== ch) { maskScratch.width = cw; maskScratch.height = ch; maskImg = null; }
+  maskCtx.setTransform(1, 0, 0, 1, 0, 0); maskCtx.clearRect(0, 0, cw, ch);
+  if (maskDrawer) {
+    maskCtx.setTransform(-1, 0, 0, 1, cw, 0); // 좌우 반전(거울)
+    maskDrawer.drawConfidenceMask(mask, [0, 0, 0, 0], [255, 255, 255, 255]);
+    maskCtx.setTransform(1, 0, 0, 1, 0, 0);
+    return;
   }
-  const mw = mask.width, mh = mask.height, f = mask.getAsFloat32Array(), d = tr.mimg.data;
+  // 예비 방식: 숫자 배열로 읽기(이 방식이 되는 PC용)
+  if (!maskImg) { maskImg = maskCtx.createImageData(cw, ch); maskImg.data.fill(255); }
+  const mw = mask.width, mh = mask.height, f = mask.getAsFloat32Array(), d = maskImg.data;
   for (let y = 0; y < ch; y++) {
     const row = ((y / ch * mh) | 0) * mw;
     for (let x = 0; x < cw; x++) {
-      const v = f[row + (mw - 1 - ((x / cw * mw) | 0))]; // 좌우 반전(거울)
+      const v = f[row + (mw - 1 - ((x / cw * mw) | 0))];
       d[(y * cw + x) * 4 + 3] = v < 0.3 ? 0 : v > 0.7 ? 255 : (v - 0.3) * 637.5;
     }
   }
-  tr.mcv.getContext('2d').putImageData(tr.mimg, 0, 0);
+  maskCtx.putImageData(maskImg, 0, 0);
+}
+function updateCutout(tr, mask, vw, vh) {
+  const cw = Math.round(vw * CUT), ch = Math.round(vh * CUT);
+  if (!tr.cut || tr.cut.width !== cw || tr.cut.height !== ch) tr.cut = mk(cw, ch);
+  drawMaskInto(mask, cw, ch);
   const c = tr.cut.getContext('2d');
   c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, cw, ch);
   c.save(); c.translate(cw, 0); c.scale(-1, 1); c.drawImage(video, 0, 0, cw, ch); c.restore();
-  c.globalCompositeOperation = 'destination-in'; c.drawImage(tr.mcv, 0, 0);
+  c.globalCompositeOperation = 'destination-in'; c.drawImage(maskScratch, 0, 0);
   c.globalCompositeOperation = 'source-over';
   tr.hasCut = true;
 }
