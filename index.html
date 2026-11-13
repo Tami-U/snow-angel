@@ -560,6 +560,7 @@ function updateTrack(tr, lm, vw, vh) {
   else tr.hasCut = false;
 
   tr.pts = figurePoints(S, hip, tr.k, tr.ax, tr.ay, tr.s);
+  tr.hipV = hip; // 눈밭 위 실제 모습을 자국과 같은 위치·크기로 맞추는 기준점
 
   if (state !== 'draw') return;
   // 진행도: 팔을 휘저은 각도 범위 + 다리를 벌린 정도
@@ -578,7 +579,31 @@ function updateTrack(tr, lm, vw, vh) {
 }
 
 /* ───────── 사람 누끼: 배경을 지우고 하단 미리보기에 표시 ───────── */
-const CUT = 0.4; // 누끼 해상도(카메라 대비) — 하단 카드(240×300)에 충분한 크기
+const CUT = 0.6; // 누끼 해상도(카메라 대비) — 눈밭 위에 크게 보여도 얼굴이 뭉개지지 않게
+
+// 배경을 지운 실제 모습을 눈밭 위, 자기 눈 자국과 같은 자리·크기로 크게 보여준다(거울처럼)
+function drawPeopleOnSnow() {
+  if (state === 'cover') return;
+  for (const tr of tracks) {
+    if (!present(tr) || !tr.hasCut || !tr.hipV || !tr.pts) continue;
+    const fade = clamp((now - tr.firstSeen) / 0.5, 0, 1) * clamp(1 - (now - tr.lastSeen) / 0.4, 0, 1)
+      * (state === 'rise' ? 1 - 0.5 * clamp(st / CFG.rise, 0, 1) : 1);
+    if (fade < 0.01) continue;
+    const x = tr.ax - tr.hipV.x * tr.k, y = tr.ay - tr.hipV.y * tr.k;
+    const w = tr.cut.width / CUT * tr.k, h = tr.cut.height / CUT * tr.k;
+    // 발밑 그림자: 눈바닥 위에 서 있는 느낌
+    const P = tr.pts, footY = Math.max(vis(P.lAn) > 0.4 ? P.lAn.y : 0, vis(P.rAn) > 0.4 ? P.rAn.y : 0, tr.ay + tr.s * 1.5);
+    ctx.save(); ctx.globalAlpha = fade * 0.8;
+    ctx.translate(tr.ax, footY + tr.jumpY); ctx.scale(1, 0.16);
+    const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, tr.s * 0.9);
+    sg.addColorStop(0, 'rgba(60,85,130,0.4)'); sg.addColorStop(1, 'rgba(60,85,130,0)');
+    ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(0, 0, tr.s * 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha = fade; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(tr.cut, x, y, w, h);
+    ctx.restore();
+  }
+}
 // 마스크(사람일 확률)를 GPU에서 바로 그림으로 그린다.
 // 일부 그래픽 드라이버는 마스크를 숫자 배열로 읽어오는 것(getAsFloat32Array → readPixels FLOAT)을 막아서
 // 사람이 통째로 투명해지므로, MediaPipe의 DrawingUtils로 같은 WebGL 컨텍스트에서 그린 결과를 사용한다.
@@ -1028,6 +1053,7 @@ function render(dt) {
 
   // 감지된 사람은 아래쪽 개별 카드에 표시
   drawAttract(dt);
+  drawPeopleOnSnow();
   drawPersonCards();
 
   // 비상
