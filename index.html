@@ -49,6 +49,7 @@ import { PoseLandmarker, FilesetResolver, DrawingUtils } from './vendor/tasks-vi
 /* ───────── 설정 ───────── */
 const CFG = {
   drawMin: 7,       // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
+  maskBlend: 0.5,   // 사람 테두리 시간 평균(0~1): 낮을수록 부드럽지만 빠른 동작에 잔상이 생김
   reloadAfterHours: 3, // 메모리 누적 방지: 이 시간이 지나면 빈 대기 화면에서 자동 새로고침
   drawMax: 20,      // 몸짓 단계 최대 길이(초)
   rise: 4.5,        // 비상 단계
@@ -522,7 +523,7 @@ function figurePoints(S, hip, k, ax, ay, s) {
 function updateTrack(tr, lm, vw, vh) {
   const raw = lm.map(p => ({ x: (1 - p.x) * vw, y: p.y * vh, v: p.visibility ?? 1 }));
   const fresh = !present(tr) || !tr.sm;
-  if (fresh) { tr.sm = raw.map(p => ({ ...p })); tr.firstSeen = now; tr.lastTips = null; tr.lastStampY = null; tr.lastSprayJumpY = 0; tr.groundHipY = null; tr.groundShY = null; tr.jumpY = 0; }
+  if (fresh) { tr.maskReset = true; tr.sm = raw.map(p => ({ ...p })); tr.firstSeen = now; tr.lastTips = null; tr.lastStampY = null; tr.lastSprayJumpY = 0; tr.groundHipY = null; tr.groundShY = null; tr.jumpY = 0; }
   else tr.sm.forEach((p, i) => { const r = raw[i]; p.x += (r.x - p.x) * 0.6; p.y += (r.y - p.y) * 0.6; p.v += (r.v - p.v) * 0.5; });
   tr.lastSeen = now;
   tr.poseVersion = (tr.poseVersion || 0) + 1;
@@ -647,12 +648,27 @@ function drawMaskInto(mask, cw, ch) {
 }
 function updateCutout(tr, mask, vw, vh) {
   const cw = Math.round(vw * CUT), ch = Math.round(vh * CUT);
-  if (!tr.cut || tr.cut.width !== cw || tr.cut.height !== ch) tr.cut = mk(cw, ch);
+  if (!tr.cut || tr.cut.width !== cw || tr.cut.height !== ch) { tr.cut = mk(cw, ch); tr.macc = mk(cw, ch); tr.maskReset = true; }
   drawMaskInto(mask, cw, ch);
+
+  // 경계 부드럽게 ① 시간 평균: 이번 마스크와 이전 마스크를 섞어 프레임마다 지글거리는 테두리를 가라앉힌다
+  const m = tr.macc.getContext('2d');
+  if (tr.maskReset) { m.clearRect(0, 0, cw, ch); m.drawImage(maskScratch, 0, 0); tr.maskReset = false; }
+  else {
+    const a = CFG.maskBlend;
+    m.globalCompositeOperation = 'destination-out'; m.globalAlpha = a; m.fillStyle = '#000'; m.fillRect(0, 0, cw, ch); // 이전 × (1-a)
+    m.globalCompositeOperation = 'lighter'; m.drawImage(maskScratch, 0, 0);                                            // + 이번 × a
+    m.globalCompositeOperation = 'source-over'; m.globalAlpha = 1;
+  }
+
   const c = tr.cut.getContext('2d');
   c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, cw, ch);
   c.save(); c.translate(cw, 0); c.scale(-1, 1); c.drawImage(video, 0, 0, cw, ch); c.restore();
-  c.globalCompositeOperation = 'destination-in'; c.drawImage(maskScratch, 0, 0);
+  // ② 살짝 블러로 계단 같은 테두리를 매끈하게, ③ 두 번 적용(알파²)해서 반투명 테두리에 배경이 묻어나는 것을 줄인다
+  c.globalCompositeOperation = 'destination-in';
+  c.filter = `blur(${Math.max(1, cw / 400).toFixed(1)}px)`;
+  c.drawImage(tr.macc, 0, 0); c.drawImage(tr.macc, 0, 0);
+  c.filter = 'none';
   // 카메라 화면 가장자리에서 몸이 칼같이 잘리지 않게 테두리를 부드럽게 지운다
   c.globalCompositeOperation = 'destination-out';
   const fx = cw * 0.06, fy = ch * 0.08;
