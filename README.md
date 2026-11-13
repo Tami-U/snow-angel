@@ -42,14 +42,18 @@ python -m http.server 8000
 # 브라우저에서 http://localhost:8000
 ```
 
-### 전시장 무인 운영 (Chrome 키오스크)
+### 전시장 무인 운영: `전시운영` 폴더
 
-```bash
-chrome --kiosk --autoplay-policy=no-user-gesture-required --use-fake-ui-for-media-stream http://localhost:8000
-```
+| 파일 | 하는 일 |
+| --- | --- |
+| `전시 시작.exe` | 내장 로컬 서버로 전시 파일을 열고(인터넷 불필요) 크롬을 키오스크 전체화면으로 띄웁니다. 카메라 권한은 자동 허용되고, 클릭 없이도 소리가 납니다. |
+| `전시 종료.exe` | 전시용 크롬과 로컬 서버를 끕니다. 개인 크롬 창은 건드리지 않습니다. |
+| `운영 안내.txt` | 현장 스태프용 한 장 안내 |
+| `src/` | exe 소스(C#)와 `build.ps1`(Windows 기본 .NET Framework 4로 다시 빌드) |
 
-- `--autoplay-policy=...`: 클릭 없이도 소리(바람, 차임)가 나게 합니다.
-- `--use-fake-ui-for-media-stream`: 카메라 권한 팝업을 자동으로 허용합니다.
+- 별도 설치 없이 Windows 10/11에서 실행됩니다. Chrome이 없으면 Edge로 엽니다.
+- 전시용 크롬은 `%LOCALAPPDATA%\SnowAngelKiosk` 전용 프로필을 씁니다.
+- 다른 컴퓨터로 옮길 때는 `snow-angel` 폴더를 통째로 복사하세요. exe만 따로 옮기면 GitHub Pages 주소로 엽니다.
 
 ### 운영자 키
 
@@ -57,7 +61,7 @@ chrome --kiosk --autoplay-policy=no-user-gesture-required --use-fake-ui-for-medi
 | --- | --- |
 | `D` | 디버그(카메라 미리보기, 관절 점, 진행도, FPS) |
 | `F` | 전체화면 |
-| `R` | 처음으로 초기화 |
+| `R` | 현장 리셋: 장면·자국·인식 정보를 지우고 첫 화면으로(카메라가 끊겨 있으면 재연결) |
 | `C` | 카메라 전환(선택한 카메라는 기억됨) |
 | `M` | 소리 끄기/켜기 |
 

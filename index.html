@@ -356,6 +356,15 @@ async function nextCamera() {
 }
 function showToast(s) { toast = s; toastT = 2.5; }
 
+// R: 현장 리셋 — 진행 중인 장면, 자국, 인식된 사람 정보를 모두 지우고 첫 화면으로
+function resetExhibit() {
+  tracks.forEach((tr, i) => { tracks[i] = newTrack(); });
+  go('idle');
+  st = CFG.idleCooldown; // 리셋 직후 바로 다음 관객을 받을 수 있게
+  if (video.srcObject?.getVideoTracks()[0]?.readyState !== 'live' && !DEMO) scheduleCameraRetry(200);
+  showToast('처음 화면으로 돌아왔어요');
+}
+
 // 전시 중 노트북/TV 화면이 꺼지지 않게
 let wakeLock = null;
 async function keepAwake() {
@@ -968,7 +977,7 @@ addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'd') debug = !debug;
   if (k === 'f') (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
-  if (k === 'r') go('idle');
+  if (k === 'r' && !e.repeat) resetExhibit();
   if (k === 'c') nextCamera();
   if (k === 'm') { muted = !muted; setAudioLevels(); showToast(muted ? '소리 꺼짐' : '소리 켜짐'); }
 });
