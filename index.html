@@ -62,7 +62,7 @@ const CFG = {
   figure: 0.17,     // 화면 높이 대비 몸통 길이
 };
 const FONT = '"Pretendard","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif';
-const IMP = 0.5; // 자국 캔버스 해상도 비율(부드러운 가장자리 + 성능)
+const IMP = 0.4; // 자국 캔버스 해상도 비율(부드러운 가장자리 + 성능) — 노트북용으로 낮춤
 
 /* ───────── 캔버스 ───────── */
 const cv = document.getElementById('c');
@@ -77,7 +77,7 @@ const dent = mk(1, 1), shade = mk(1, 1), tmpA = mk(1, 1); // 눌린 모양 마�
 let W = 0, H = 0, DPR = 1, bg = null, glints = [], flakes = [];
 
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+  DPR = 1; // 노트북 성능용: 고해상도 화면에서도 1배로 그림(TV 1080p에서는 차이 없음)
   W = cv.width = Math.round(innerWidth * DPR);
   H = cv.height = Math.round(innerHeight * DPR);
   for (const c of [dent, shade, tmpA]) { c.width = Math.round(W * IMP); c.height = Math.round(H * IMP); }
@@ -540,7 +540,7 @@ function updateTrack(tr, lm, vw, vh) {
 }
 
 /* ───────── 사람 누끼: 배경을 지우고 하단 미리보기에 표시 ───────── */
-const CUT = 0.75; // 누끼 해상도(카메라 대비) — 얼굴이 선명하게
+const CUT = 0.4; // 누끼 해상도(카메라 대비) — 하단 카드(240×300)에 충분한 크기
 function updateCutout(tr, mask, vw, vh) {
   const cw = Math.round(vw * CUT), ch = Math.round(vh * CUT);
   if (!tr.cut || tr.cut.width !== cw || tr.cut.height !== ch) {
@@ -688,8 +688,12 @@ function clearImprint() {
 }
 
 // 마스크로 눈에 눌린 자국을 입체적으로 합성: 바깥 둔덕 하이라이트 + 바닥 그늘 + 위쪽 안벽 그림자
+let lastCompose = -1;
 function composeImprint() {
   if (!imprintDirty) return;
+  // 블러 합성은 무거우므로 몸짓 중에는 초당 약 8번만 다시 그린다(자국은 마스크에 계속 쌓임)
+  if (state === 'draw' && now - lastCompose < 0.12) return;
+  lastCompose = now;
   imprintDirty = false;
   const w = dent.width, h = dent.height, u = DPR * IMP * Math.min(W / DPR / 1920, H / DPR / 1080) * 1.6 + 0.5;
   const out = shade.getContext('2d'), t = tmpA.getContext('2d');
@@ -984,7 +988,7 @@ function drawDebug() {
 /* ───────── 루프 ───────── */
 let last = performance.now(), lastVideoTime = -1;
 function frame(ts) {
-  const dt = Math.min(1, Math.max(0, (ts - last) / 1000)); last = ts; now += dt;
+  const dt = Math.min(0.1, Math.max(0, (ts - last) / 1000)); last = ts; now += dt;
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
   if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
