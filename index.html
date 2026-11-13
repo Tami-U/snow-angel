@@ -48,7 +48,7 @@ import { PoseLandmarker, FilesetResolver, DrawingUtils } from './vendor/tasks-vi
 
 /* ───────── 설정 ───────── */
 const CFG = {
-  drawMin: 8,       // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
+  drawMin: 7,       // 빠르게 완성해도 이만큼은 몸짓을 즐기게 한다
   reloadAfterHours: 3, // 메모리 누적 방지: 이 시간이 지나면 빈 대기 화면에서 자동 새로고침
   drawMax: 20,      // 몸짓 단계 최대 길이(초)
   rise: 4.5,        // 비상 단계
@@ -533,7 +533,7 @@ function updateTrack(tr, lm, vw, vh) {
   // 흔들림 방지: 기준점(골반)과 크기를 One Euro 필터로 안정화 — 가만히 있으면 단단히 고정, 움직이면 빠르게 따라감.
   // 크기는 몸통 길이로만 정한다(팔을 뻗을 때마다 몸 전체가 커졌다 작아지던 문제 해결).
   if (fresh || !tr.fHip) {
-    tr.fHipX = oneEuro(0.6, 0.004); tr.fHipY = oneEuro(0.6, 0.004); tr.fK = oneEuro(0.25, 0);
+    tr.fHipX = oneEuro(0.35, 0.003); tr.fHipY = oneEuro(0.35, 0.003); tr.fK = oneEuro(0.15, 0);
     tr.fHip = true;
   }
   const hip = { x: tr.fHipX(rawHip.x, now), y: tr.fHipY(rawHip.y, now) };
