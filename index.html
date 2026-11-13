@@ -525,11 +525,20 @@ function updateTrack(tr, lm, vw, vh) {
   const targetK = Math.min(H * CFG.figure / torso, W * 0.16 / maxDx, H * 0.29 / maxDy);
   tr.k = fresh ? targetK : tr.k + (targetK - tr.k) * 0.25;
   tr.s = torso * tr.k;
-  // 혼자면 화면 가운데, 둘이면 왼쪽/오른쪽. 몸짓 중에는 시작할 때 정한 배치를 유지(자국이 미끄러지지 않게)
-  const other = tracks[1 - tracks.indexOf(tr)];
-  const solo = state === 'draw' ? soloLayout : now - other.lastSeen > CFG.slotHold;
-  const axTarget = W * (solo ? 0.5 : tracks.indexOf(tr) === 0 ? 0.28 : 0.72);
-  tr.ax = fresh || state === 'draw' ? axTarget : tr.ax + (axTarget - tr.ax) * 0.15;
+  // 혼자면 화면 가운데, 둘이면 왼쪽/오른쪽.
+  // 몸짓~비상 동안은 사람마다 시작할 때 정한 자리를 유지(자국이 미끄러지지 않게).
+  // 도중에 합류한 사람은 자기 쪽(왼/오른쪽) 자리에 고정 — 먼저 온 사람과 가운데에서 겹치지 않게.
+  const idx = tracks.indexOf(tr), side = idx === 0 ? 0.28 : 0.72;
+  const other = tracks[1 - idx];
+  let axTarget;
+  if (state === 'draw' || state === 'rise') {
+    if (tr.lockAx == null) tr.lockAx = side;
+    axTarget = W * tr.lockAx;
+  } else {
+    tr.lockAx = null;
+    axTarget = W * (now - other.lastSeen > CFG.slotHold ? 0.5 : side);
+  }
+  tr.ax = fresh || state === 'draw' || state === 'rise' ? axTarget : tr.ax + (axTarget - tr.ax) * 0.15;
   if (tr.groundHipY === null) { tr.groundHipY = hip.y; tr.groundShY = sh.y; }
   const rise = Math.min(tr.groundHipY - hip.y, tr.groundShY - sh.y);
   if (rise < torso * 0.06) {
@@ -925,7 +934,12 @@ function go(s) {
   // 몸짓 단계가 끝날 때 1회 체험으로 집계(천사 완성 → rise, 미완성 → cover). R 리셋으로 끊긴 건 제외
   if (state === 'draw' && (s === 'rise' || s === 'cover')) recordSession(s === 'rise', Math.round(st));
   state = s; st = 0;
-  if (s === 'draw') { soloLayout = tracks.filter(present).length <= 1; tracks.forEach(tr => { resetProgress(tr); tr.lastTips = null; tr.lastStampY = null; tr.lastSprayJumpY = 0; tr.stampedVersion = 0; }); doneT = 0; absentT = 0; clearImprint(); }
+  if (s === 'draw') {
+    soloLayout = tracks.filter(present).length <= 1;
+    // 시작할 때 서 있던 사람의 자리를 고정: 혼자면 가운데, 둘이면 각자 쪽
+    tracks.forEach((tr, i) => { tr.lockAx = present(tr) ? (soloLayout ? 0.5 : i === 0 ? 0.28 : 0.72) : null; });
+  }
+  if (s === 'draw') { tracks.forEach(tr => { resetProgress(tr); tr.lastTips = null; tr.lastStampY = null; tr.lastSprayJumpY = 0; tr.stampedVersion = 0; }); doneT = 0; absentT = 0; clearImprint(); }
   if (s === 'rise') {
     buildAngel(); chime();
     for (const tr of tracks) if (tr.angelHead) {
